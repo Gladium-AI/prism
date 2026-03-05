@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Gladium AI Network Snapshot",
+  "version": "0.1.0",
+  "description": "Chrome DevTools Network Snapshot Extension",
+  "permissions": [
+    "cookies",
+    "activeTab"
+  ],
+  "devtools_page": "devtools.html"
+}
