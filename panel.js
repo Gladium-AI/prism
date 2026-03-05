@@ -7,6 +7,8 @@
     requestCount: document.getElementById("request-count"),
     requestList: document.getElementById("request-list"),
     requestDetails: document.getElementById("request-details"),
+    cookieCount: document.getElementById("cookie-count"),
+    cookieList: document.getElementById("cookie-list"),
   };
 
   const state = {
@@ -15,6 +17,11 @@
     selectedId: null,
     liveEntries: [],
     snapshotEntries: [],
+    snapshotCookies: [],
+    snapshotCookieDomain: null,
+    snapshotCookieError: null,
+    isCapturingCookies: false,
+    snapshotCaptureId: 0,
     lastListSignature: "",
   };
 
@@ -142,6 +149,248 @@
         return `${name}: ${value}`;
       })
       .join("\n");
+  }
+
+  function getHostnameFromUrl(url) {
+    if (typeof url !== "string" || url.length === 0) {
+      return null;
+    }
+
+    try {
+      return new URL(url).hostname || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getHttpUrl(url) {
+    if (typeof url !== "string" || url.length === 0) {
+      return null;
+    }
+
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return null;
+      }
+
+      return parsed.toString();
+    } catch {
+      return null;
+    }
+  }
+
+  function getUrlFromEntries(entries) {
+    for (const entry of entries) {
+      const candidate = getHttpUrl(entry && entry.request ? entry.request.url : null);
+      if (candidate) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function getDomainFromEntries(entries) {
+    for (const entry of entries) {
+      const domain = getHostnameFromUrl(entry && entry.request ? entry.request.url : null);
+      if (domain) {
+        return domain;
+      }
+    }
+    return null;
+  }
+
+  function evaluateInInspectedWindow(expression) {
+    return new Promise((resolve) => {
+      if (
+        typeof chrome === "undefined" ||
+        !chrome.devtools ||
+        !chrome.devtools.inspectedWindow ||
+        typeof chrome.devtools.inspectedWindow.eval !== "function"
+      ) {
+        resolve({ value: null, error: "inspectedWindow API unavailable" });
+        return;
+      }
+
+      try {
+        chrome.devtools.inspectedWindow.eval(expression, (value, exceptionInfo) => {
+          if (exceptionInfo && exceptionInfo.isException) {
+            resolve({
+              value: null,
+              error: exceptionInfo.value || "inspectedWindow eval failed",
+            });
+            return;
+          }
+
+          const runtimeError = chrome.runtime && chrome.runtime.lastError
+            ? chrome.runtime.lastError.message
+            : null;
+          resolve({
+            value: runtimeError ? null : value,
+            error: runtimeError,
+          });
+        });
+      } catch (error) {
+        resolve({
+          value: null,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+  }
+
+  async function getActiveTabCookieScope() {
+    const evalResult = await evaluateInInspectedWindow("window.location.href");
+    const inspectedUrl = getHttpUrl(evalResult.value);
+    if (inspectedUrl) {
+      return {
+        domain: getHostnameFromUrl(inspectedUrl),
+        url: inspectedUrl,
+      };
+    }
+
+    const fallbackUrl = getUrlFromEntries(state.liveEntries);
+    return {
+      domain: fallbackUrl ? getHostnameFromUrl(fallbackUrl) : getDomainFromEntries(state.liveEntries),
+      url: fallbackUrl,
+    };
+  }
+
+  function getCookiesByFilter(filter) {
+    return new Promise((resolve) => {
+      if (
+        typeof chrome === "undefined" ||
+        !chrome.cookies ||
+        typeof chrome.cookies.getAll !== "function"
+      ) {
+        resolve({ cookies: [], error: "cookies API unavailable" });
+        return;
+      }
+
+      try {
+        chrome.cookies.getAll(filter, (cookies) => {
+          const runtimeError = chrome.runtime && chrome.runtime.lastError
+            ? chrome.runtime.lastError.message
+            : null;
+          if (runtimeError) {
+            resolve({ cookies: [], error: runtimeError });
+            return;
+          }
+
+          resolve({
+            cookies: Array.isArray(cookies) ? cookies : [],
+            error: null,
+          });
+        });
+      } catch (error) {
+        resolve({
+          cookies: [],
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+  }
+
+  async function getCookiesForScope(scope) {
+    const filters = [];
+    if (scope && typeof scope.domain === "string" && scope.domain.length > 0) {
+      filters.push({ domain: scope.domain });
+    }
+    if (scope && typeof scope.url === "string" && scope.url.length > 0) {
+      filters.push({ url: scope.url });
+    }
+
+    if (!filters.length) {
+      return { cookies: [], error: "active tab domain unavailable" };
+    }
+
+    const seen = new Set();
+    const mergedCookies = [];
+    let firstError = null;
+    let hasSuccessfulQuery = false;
+
+    for (const filter of filters) {
+      const result = await getCookiesByFilter(filter);
+      if (result.error) {
+        if (!firstError) {
+          firstError = result.error;
+        }
+        continue;
+      }
+
+      hasSuccessfulQuery = true;
+
+      for (const cookie of result.cookies) {
+        const partitionKey =
+          cookie && cookie.partitionKey ? JSON.stringify(cookie.partitionKey) : "";
+        const key = [
+          cookie && cookie.name ? cookie.name : "",
+          cookie && cookie.domain ? cookie.domain : "",
+          cookie && cookie.path ? cookie.path : "",
+          cookie && cookie.storeId ? cookie.storeId : "",
+          partitionKey,
+        ].join("|");
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        mergedCookies.push(cookie);
+      }
+    }
+
+    return {
+      cookies: mergedCookies,
+      error: hasSuccessfulQuery ? null : firstError,
+    };
+  }
+
+  function sortCookies(cookies) {
+    return cookies.slice().sort((left, right) => {
+      const leftName = left && typeof left.name === "string" ? left.name : "";
+      const rightName = right && typeof right.name === "string" ? right.name : "";
+      const nameOrder = leftName.localeCompare(rightName);
+      if (nameOrder !== 0) {
+        return nameOrder;
+      }
+
+      const leftDomain = left && typeof left.domain === "string" ? left.domain : "";
+      const rightDomain = right && typeof right.domain === "string" ? right.domain : "";
+      return leftDomain.localeCompare(rightDomain);
+    });
+  }
+
+  function formatCookieFlags(cookie) {
+    const flags = [];
+
+    if (cookie && cookie.secure) {
+      flags.push("Secure");
+    }
+
+    if (cookie && cookie.httpOnly) {
+      flags.push("HttpOnly");
+    }
+
+    if (cookie && cookie.session) {
+      flags.push("Session");
+    }
+
+    if (cookie && cookie.hostOnly) {
+      flags.push("HostOnly");
+    }
+
+    if (cookie && typeof cookie.sameSite === "string" && cookie.sameSite !== "unspecified") {
+      flags.push(`SameSite=${cookie.sameSite}`);
+    }
+
+    if (cookie && cookie.partitionKey) {
+      flags.push("Partitioned");
+    }
+
+    if (!flags.length) {
+      return "None";
+    }
+
+    return flags.join(", ");
   }
 
   function formatStatusText(status, statusText) {
@@ -386,12 +635,100 @@
     ].join("\n");
   }
 
+  function renderCookies() {
+    if (!elements.cookieCount || !elements.cookieList) {
+      return;
+    }
+
+    if (!state.isSnapshot) {
+      elements.cookieCount.textContent = "0";
+      elements.cookieList.innerHTML =
+        '<div class="empty-state">Take a snapshot to capture cookies for the active tab domain.</div>';
+      return;
+    }
+
+    elements.cookieCount.textContent = String(state.snapshotCookies.length);
+
+    if (state.isCapturingCookies) {
+      elements.cookieList.innerHTML =
+        '<div class="empty-state">Capturing cookies for the active tab domain...</div>';
+      return;
+    }
+
+    if (state.snapshotCookieError) {
+      elements.cookieList.innerHTML = `<div class="empty-state">Unable to capture cookies: ${escapeHtml(
+        state.snapshotCookieError
+      )}</div>`;
+      return;
+    }
+
+    if (!state.snapshotCookies.length) {
+      const domainSuffix = state.snapshotCookieDomain
+        ? ` (${escapeHtml(state.snapshotCookieDomain)})`
+        : "";
+      elements.cookieList.innerHTML = `<div class="empty-state">No cookies found for the active tab domain${domainSuffix}.</div>`;
+      return;
+    }
+
+    const rows = state.snapshotCookies.map((cookie) => {
+      const name = cookie && typeof cookie.name === "string" && cookie.name.length > 0
+        ? cookie.name
+        : "(unnamed)";
+      const value = cookie && typeof cookie.value === "string" && cookie.value.length > 0
+        ? cookie.value
+        : "(empty)";
+      const domain = cookie && typeof cookie.domain === "string" && cookie.domain.length > 0
+        ? cookie.domain
+        : "(unknown domain)";
+      const flags = formatCookieFlags(cookie);
+
+      return [
+        '<article class="cookie-row">',
+        `  <p class="cookie-name">${escapeHtml(name)}</p>`,
+        `  <p class="cookie-value">${escapeHtml(value)}</p>`,
+        `  <p class="cookie-meta">Domain: ${escapeHtml(domain)}</p>`,
+        `  <p class="cookie-meta">Flags: ${escapeHtml(flags)}</p>`,
+        "</article>",
+      ].join("\n");
+    });
+
+    elements.cookieList.innerHTML = rows.join("\n");
+  }
+
+  async function captureSnapshotCookies(captureId) {
+    const scope = await getActiveTabCookieScope();
+    if (!state.isSnapshot || captureId !== state.snapshotCaptureId) {
+      return;
+    }
+
+    if (!scope || (!scope.domain && !scope.url)) {
+      state.snapshotCookieDomain = null;
+      state.snapshotCookieError = "active tab domain unavailable";
+      state.snapshotCookies = [];
+      state.isCapturingCookies = false;
+      renderCookies();
+      return;
+    }
+
+    const cookieResult = await getCookiesForScope(scope);
+    if (!state.isSnapshot || captureId !== state.snapshotCaptureId) {
+      return;
+    }
+
+    state.snapshotCookieDomain = scope.domain;
+    state.snapshotCookies = sortCookies(cookieResult.cookies);
+    state.snapshotCookieError = cookieResult.error;
+    state.isCapturingCookies = false;
+    renderCookies();
+  }
+
   function render() {
     const entries = getDisplayEntries();
     ensureValidSelection(entries);
     renderToolbar(entries);
     renderList(entries);
     renderDetails(entries);
+    renderCookies();
   }
 
   function loadEntriesFromRecorder() {
@@ -419,16 +756,28 @@
     if (state.isSnapshot) {
       state.isSnapshot = false;
       state.snapshotEntries = [];
+      state.snapshotCookies = [];
+      state.snapshotCookieDomain = null;
+      state.snapshotCookieError = null;
+      state.isCapturingCookies = false;
+      state.snapshotCaptureId += 1;
       state.snapshotTime = null;
       state.lastListSignature = "";
       render();
       return;
     }
 
+    const captureId = state.snapshotCaptureId + 1;
+    state.snapshotCaptureId = captureId;
     state.isSnapshot = true;
     state.snapshotTime = new Date();
     state.snapshotEntries = state.liveEntries.slice();
+    state.snapshotCookies = [];
+    state.snapshotCookieDomain = null;
+    state.snapshotCookieError = null;
+    state.isCapturingCookies = true;
     render();
+    captureSnapshotCookies(captureId);
   }
 
   function startPolling() {
