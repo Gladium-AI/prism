@@ -122,6 +122,27 @@ body {
   box-shadow: 0 8px 18px rgba(13, 40, 71, 0.06);
 }
 
+.detail-pane {
+  overflow: hidden;
+}
+
+.detail-block {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-block:last-child {
+  border-bottom: none;
+}
+
+.cookie-block {
+  flex: 0 0 38%;
+  min-height: 170px;
+}
+
 .pane-header {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
@@ -275,6 +296,48 @@ body {
   gap: 10px;
 }
 
+.cookie-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  background: #ffffff;
+}
+
+.cookie-row {
+  border: 1px solid #dce5f3;
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 8px 9px;
+  display: grid;
+  gap: 4px;
+}
+
+.cookie-name {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #122c4f;
+  word-break: break-word;
+}
+
+.cookie-value {
+  margin: 0;
+  font-size: 11px;
+  color: #1d3a60;
+  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cookie-meta {
+  margin: 0;
+  font-size: 10px;
+  color: #4a607f;
+  letter-spacing: 0.01em;
+}
+
 .empty-state {
   border: 1px dashed #bdcde5;
   border-radius: 10px;
@@ -371,5 +434,9 @@ body {
 
   .request-list {
     max-height: 280px;
+  }
+
+  .cookie-block {
+    flex-basis: 230px;
   }
 }

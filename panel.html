@@ -32,11 +32,21 @@
           <div id="request-list" class="request-list" role="listbox" aria-label="Recorded requests"></div>
         </article>
 
-        <article class="pane detail-pane" aria-label="Request details">
-          <header class="pane-header">
-            <h2>Request Details</h2>
-          </header>
-          <div id="request-details" class="request-details"></div>
+        <article class="pane detail-pane" aria-label="Snapshot details">
+          <section class="detail-block" aria-label="Request details">
+            <header class="pane-header">
+              <h2>Request Details</h2>
+            </header>
+            <div id="request-details" class="request-details"></div>
+          </section>
+
+          <section class="detail-block cookie-block" aria-label="Snapshot cookies">
+            <header class="pane-header">
+              <h2>Snapshot Cookies</h2>
+              <span id="cookie-count" class="count-pill">0</span>
+            </header>
+            <div id="cookie-list" class="cookie-list"></div>
+          </section>
         </article>
       </section>
     </main>
