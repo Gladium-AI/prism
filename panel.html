@@ -17,6 +17,9 @@
           <button id="snapshot-toggle" class="snapshot-button" type="button">
             Take Snapshot
           </button>
+          <button id="snapshot-export" class="export-button" type="button" disabled>
+            Export JSON
+          </button>
           <p id="live-indicator" class="live-indicator" aria-live="polite">
             Live updates enabled
           </p>
@@ -28,6 +31,7 @@
           <header class="pane-header">
             <h2>Captured Requests</h2>
             <span id="request-count" class="count-pill">0</span>
+            <span id="endpoint-count" class="count-pill endpoint-pill" title="Unique endpoints">0 endpoints</span>
           </header>
           <div id="request-list" class="request-list" role="listbox" aria-label="Recorded requests"></div>
         </article>
@@ -52,6 +56,7 @@
     </main>
 
     <script src="request-recorder.js"></script>
+    <script src="url-normalizer.js"></script>
     <script src="panel.js"></script>
   </body>
 </html>

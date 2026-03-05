@@ -3,8 +3,10 @@
 
   const elements = {
     snapshotButton: document.getElementById("snapshot-toggle"),
+    exportButton: document.getElementById("snapshot-export"),
     liveIndicator: document.getElementById("live-indicator"),
     requestCount: document.getElementById("request-count"),
+    endpointCount: document.getElementById("endpoint-count"),
     requestList: document.getElementById("request-list"),
     requestDetails: document.getElementById("request-details"),
     cookieCount: document.getElementById("cookie-count"),
@@ -149,6 +151,187 @@
         return `${name}: ${value}`;
       })
       .join("\n");
+  }
+
+  function normalizeHeaders(headers) {
+    if (!Array.isArray(headers)) {
+      return [];
+    }
+
+    return headers
+      .map((header) => {
+        if (!header || typeof header.name !== "string") {
+          return null;
+        }
+
+        return {
+          name: header.name,
+          value: header.value !== undefined ? String(header.value) : "",
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function serializeScore(score) {
+    return {
+      total: score && typeof score.total === "number" ? score.total : 0,
+      normalized: score && typeof score.normalized === "number" ? score.normalized : null,
+      reasons: score && Array.isArray(score.reasons) ? score.reasons : [],
+    };
+  }
+
+  function getEndpointKey(entry) {
+    const normalizer = globalScope.GladiumUrlNormalizer;
+    if (!normalizer || typeof normalizer.endpointKey !== "function") {
+      return null;
+    }
+
+    const request = entry && entry.request ? entry.request : {};
+    return normalizer.endpointKey(request.method, request.url);
+  }
+
+  function serializeRequestForExport(entry) {
+    const request = entry && entry.request ? entry.request : {};
+    const response = entry && entry.response ? entry.response : {};
+    const timing = entry && entry.timing ? entry.timing : {};
+
+    return {
+      id: entry && typeof entry.id === "number" ? entry.id : null,
+      capturedAt: entry && typeof entry.capturedAt === "string" ? entry.capturedAt : null,
+      endpointKey: getEndpointKey(entry),
+      score: serializeScore(entry ? entry.score : null),
+      request: {
+        url: typeof request.url === "string" ? request.url : null,
+        method: typeof request.method === "string" ? request.method.toUpperCase() : null,
+        headers: normalizeHeaders(request.headers),
+        body: typeof request.body === "string" ? request.body : null,
+      },
+      response: {
+        status: typeof response.status === "number" ? response.status : null,
+        statusText: typeof response.statusText === "string" ? response.statusText : null,
+        headers: normalizeHeaders(response.headers),
+        body: typeof response.body === "string" ? response.body : null,
+        contentType: typeof response.contentType === "string" ? response.contentType : null,
+        encoding: typeof response.encoding === "string" ? response.encoding : null,
+        bodyCaptureError: typeof response.bodyCaptureError === "string"
+          ? response.bodyCaptureError
+          : null,
+      },
+      timing: {
+        startedDateTime: typeof timing.startedDateTime === "string" ? timing.startedDateTime : null,
+        durationMs: typeof timing.durationMs === "number" ? timing.durationMs : null,
+      },
+    };
+  }
+
+  function serializeCookieForExport(cookie) {
+    const result = {
+      name: cookie && typeof cookie.name === "string" ? cookie.name : "",
+      value: cookie && typeof cookie.value === "string" ? cookie.value : "",
+      domain: cookie && typeof cookie.domain === "string" ? cookie.domain : "",
+      path: cookie && typeof cookie.path === "string" ? cookie.path : "",
+      secure: Boolean(cookie && cookie.secure),
+      httpOnly: Boolean(cookie && cookie.httpOnly),
+      sameSite: cookie && typeof cookie.sameSite === "string" ? cookie.sameSite : "unspecified",
+      session: Boolean(cookie && cookie.session),
+      hostOnly: Boolean(cookie && cookie.hostOnly),
+      storeId: cookie && typeof cookie.storeId === "string" ? cookie.storeId : "",
+      expirationDate:
+        cookie && typeof cookie.expirationDate === "number" ? cookie.expirationDate : null,
+      partitionKey: cookie && cookie.partitionKey ? cookie.partitionKey : null,
+    };
+
+    if (typeof result.expirationDate === "number") {
+      result.expiresAt = new Date(result.expirationDate * 1000).toISOString();
+    } else {
+      result.expiresAt = null;
+    }
+
+    return result;
+  }
+
+  function getSnapshotTimestamp(snapshotTime) {
+    return snapshotTime instanceof Date ? snapshotTime.toISOString() : null;
+  }
+
+  function formatNumberForFilename(value) {
+    return String(value).padStart(2, "0");
+  }
+
+  function buildSnapshotFilename(snapshotTime) {
+    const date = snapshotTime instanceof Date ? snapshotTime : new Date();
+    const yyyy = date.getFullYear();
+    const mm = formatNumberForFilename(date.getMonth() + 1);
+    const dd = formatNumberForFilename(date.getDate());
+    const hh = formatNumberForFilename(date.getHours());
+    const min = formatNumberForFilename(date.getMinutes());
+    const ss = formatNumberForFilename(date.getSeconds());
+
+    return `gladium-snapshot-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
+  }
+
+  function buildEndpointsSummary(entries) {
+    const normalizer = globalScope.GladiumUrlNormalizer;
+    if (!normalizer || typeof normalizer.deduplicateEntries !== "function") {
+      return [];
+    }
+
+    const groups = normalizer.deduplicateEntries(entries);
+    return groups.map(function (group) {
+      const scores = group.entries.map(getScore);
+      const maxScore = Math.max.apply(null, scores.length ? scores : [0]);
+
+      return {
+        endpointKey: group.endpointKey,
+        normalizedUrl: group.normalizedUrl,
+        method: group.method,
+        requestCount: group.entries.length,
+        maxScore: maxScore,
+        requestIds: group.entries.map(function (entry) {
+          return entry && typeof entry.id === "number" ? entry.id : null;
+        }),
+      };
+    });
+  }
+
+  function buildSnapshotExportPayload() {
+    const endpoints = buildEndpointsSummary(state.snapshotEntries);
+
+    return {
+      format: "gladium-snapshot-v1",
+      exportedAt: new Date().toISOString(),
+      snapshot: {
+        capturedAt: getSnapshotTimestamp(state.snapshotTime),
+        requestCount: state.snapshotEntries.length,
+        endpointCount: endpoints.length,
+        cookieCount: state.snapshotCookies.length,
+        cookieDomain: state.snapshotCookieDomain,
+        cookieCaptureError: state.snapshotCookieError,
+      },
+      endpoints: endpoints,
+      requests: state.snapshotEntries.map(serializeRequestForExport),
+      cookies: state.snapshotCookies.map(serializeCookieForExport),
+    };
+  }
+
+  function downloadTextFile(fileName, content) {
+    const blob = new Blob([content], {
+      type: "application/json;charset=utf-8",
+    });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = objectUrl;
+    link.download = fileName;
+    link.style.display = "none";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    globalScope.setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+    }, 0);
   }
 
   function getHostnameFromUrl(url) {
@@ -482,8 +665,25 @@
     return "status-unknown";
   }
 
+  function countEndpoints(entries) {
+    const normalizer = globalScope.GladiumUrlNormalizer;
+    if (!normalizer || typeof normalizer.deduplicateEntries !== "function") {
+      return entries.length;
+    }
+
+    return normalizer.deduplicateEntries(entries).length;
+  }
+
   function renderToolbar(entries) {
     elements.requestCount.textContent = String(entries.length);
+
+    if (elements.endpointCount) {
+      elements.endpointCount.textContent = String(countEndpoints(entries));
+    }
+
+    if (elements.exportButton) {
+      elements.exportButton.disabled = !state.isSnapshot || state.isCapturingCookies;
+    }
 
     if (state.isSnapshot) {
       const snapshotTime = formatSnapshotTime(state.snapshotTime);
@@ -564,6 +764,8 @@
         ? selectedEntry.request.url
         : "(no URL)";
 
+    const epKey = getEndpointKey(selectedEntry);
+
     const method = getMethod(selectedEntry);
     const status = getStatus(selectedEntry);
     const contentType = getContentType(selectedEntry);
@@ -607,6 +809,7 @@
     elements.requestDetails.innerHTML = [
       '<section class="detail-summary">',
       `  <p class="summary-url">${escapeHtml(requestUrl)}</p>`,
+      epKey ? `  <p class="summary-endpoint" title="Normalized endpoint key">${escapeHtml(epKey)}</p>` : "",
       '  <div class="summary-meta">',
       `    <span class="meta-chip">${escapeHtml(method)}</span>`,
       `    <span class="meta-chip">${escapeHtml(formatStatusText(status, statusLabel))}</span>`,
@@ -706,7 +909,7 @@
       state.snapshotCookieError = "active tab domain unavailable";
       state.snapshotCookies = [];
       state.isCapturingCookies = false;
-      renderCookies();
+      render();
       return;
     }
 
@@ -719,7 +922,24 @@
     state.snapshotCookies = sortCookies(cookieResult.cookies);
     state.snapshotCookieError = cookieResult.error;
     state.isCapturingCookies = false;
-    renderCookies();
+    render();
+  }
+
+  function onExportSnapshotClick() {
+    if (!state.isSnapshot || state.isCapturingCookies) {
+      return;
+    }
+
+    const payload = buildSnapshotExportPayload();
+    const json = JSON.stringify(payload, null, 2);
+    const fileName = buildSnapshotFilename(state.snapshotTime);
+
+    try {
+      downloadTextFile(fileName, json);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      elements.liveIndicator.textContent = `Export failed: ${errorMessage}`;
+    }
   }
 
   function render() {
@@ -795,6 +1015,10 @@
     }
 
     elements.snapshotButton.addEventListener("click", onSnapshotToggleClick);
+
+    if (elements.exportButton) {
+      elements.exportButton.addEventListener("click", onExportSnapshotClick);
+    }
 
     if (!globalScope.GladiumRequestRecorder) {
       elements.liveIndicator.textContent = "Recorder unavailable in this context.";
