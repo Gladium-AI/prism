@@ -151,18 +151,19 @@ function parseCookiePair(rawPair: string): { name: string; value: string } | nul
 function addCookieSignal(
   map: Map<string, CookieSignalRow>,
   signal: { name: string; value: string },
+  count = 1,
 ): void {
   const key = `${signal.name}\u0000${signal.value}`;
   const existing = map.get(key);
   if (existing) {
-    existing.observedCount += 1;
+    existing.observedCount += count;
     return;
   }
 
   map.set(key, {
     name: signal.name,
     value: signal.value,
-    observedCount: 1,
+    observedCount: count,
   });
 }
 
@@ -219,6 +220,33 @@ function extractCapturedCookieSignalsFromHeaders(headers: readonly HeaderLike[])
   return sortCookieSignals(map.values());
 }
 
+function extractCookieSignalsFromRecordedCookies(
+  cookies:
+    | readonly {
+        name: string;
+        value: string;
+      }[]
+    | null
+    | undefined,
+): CookieSignalRow[] {
+  const map = new Map<string, CookieSignalRow>();
+  if (!Array.isArray(cookies) || cookies.length === 0) {
+    return [];
+  }
+
+  for (const cookie of cookies) {
+    if (!cookie || typeof cookie.name !== 'string' || cookie.name.length === 0) {
+      continue;
+    }
+    addCookieSignal(map, {
+      name: cookie.name,
+      value: typeof cookie.value === 'string' ? cookie.value : '',
+    });
+  }
+
+  return sortCookieSignals(map.values());
+}
+
 function collectCookieSignals(entries: readonly RecordedNetworkEntry[]): {
   sent: CookieSignalRow[];
   captured: CookieSignalRow[];
@@ -227,11 +255,20 @@ function collectCookieSignals(entries: readonly RecordedNetworkEntry[]): {
   const capturedMap = new Map<string, CookieSignalRow>();
 
   for (const entry of entries) {
-    for (const cookie of extractSentCookieSignalsFromHeaders(entry.request.headers)) {
-      addCookieSignal(sentMap, { name: cookie.name, value: cookie.value });
+    const sentCookies =
+      entry.request.cookies.length > 0
+        ? extractCookieSignalsFromRecordedCookies(entry.request.cookies)
+        : extractSentCookieSignalsFromHeaders(entry.request.headers);
+    for (const cookie of sentCookies) {
+      addCookieSignal(sentMap, { name: cookie.name, value: cookie.value }, cookie.observedCount);
     }
-    for (const cookie of extractCapturedCookieSignalsFromHeaders(entry.response.headers)) {
-      addCookieSignal(capturedMap, { name: cookie.name, value: cookie.value });
+
+    const capturedCookies =
+      entry.response.cookies.length > 0
+        ? extractCookieSignalsFromRecordedCookies(entry.response.cookies)
+        : extractCapturedCookieSignalsFromHeaders(entry.response.headers);
+    for (const cookie of capturedCookies) {
+      addCookieSignal(capturedMap, { name: cookie.name, value: cookie.value }, cookie.observedCount);
     }
   }
 
@@ -1173,10 +1210,14 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
   const selectedResponseHeaders = selectedEntry ? toHeaderPreviewRowsFromRaw(selectedEntry.response.headers) : [];
   const selectedAuthHeaders = selectedRequestHeaders.filter((row) => row.isAuth);
   const selectedSentCookies = selectedEntry
-    ? extractSentCookieSignalsFromHeaders(selectedEntry.request.headers)
+    ? selectedEntry.request.cookies.length > 0
+      ? extractCookieSignalsFromRecordedCookies(selectedEntry.request.cookies)
+      : extractSentCookieSignalsFromHeaders(selectedEntry.request.headers)
     : [];
   const selectedCapturedCookies = selectedEntry
-    ? extractCapturedCookieSignalsFromHeaders(selectedEntry.response.headers)
+    ? selectedEntry.response.cookies.length > 0
+      ? extractCookieSignalsFromRecordedCookies(selectedEntry.response.cookies)
+      : extractCapturedCookieSignalsFromHeaders(selectedEntry.response.headers)
     : [];
 
   return (

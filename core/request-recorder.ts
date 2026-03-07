@@ -1,5 +1,6 @@
 import type {
   BrowserLike,
+  CookieLike,
   DevtoolsNetworkRequestEntryLike,
   HeaderLike,
   RecordedNetworkEntry,
@@ -56,6 +57,42 @@ function cloneHeaders(headers: readonly HeaderLike[] | null | undefined): Header
     name: header.name,
     value: header.value,
   }));
+}
+
+function normalizeCookieExpires(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === 'string' && value.length > 0) {
+    return value;
+  }
+  return null;
+}
+
+function cloneCookies(
+  cookies: readonly CookieLike[] | null | undefined,
+): Array<{
+  name: string;
+  value: string;
+  domain: string | null;
+  path: string | null;
+  expires: string | null;
+  httpOnly: boolean | null;
+  secure: boolean | null;
+  sameSite: string | null;
+}> {
+  return toSafeArray(cookies)
+    .filter((cookie): cookie is CookieLike => !!cookie && typeof cookie.name === 'string')
+    .map((cookie) => ({
+      name: cookie.name,
+      value: cookie.value == null ? '' : String(cookie.value),
+      domain: typeof cookie.domain === 'string' && cookie.domain.length > 0 ? cookie.domain : null,
+      path: typeof cookie.path === 'string' && cookie.path.length > 0 ? cookie.path : null,
+      expires: normalizeCookieExpires(cookie.expires),
+      httpOnly: typeof cookie.httpOnly === 'boolean' ? cookie.httpOnly : null,
+      secure: typeof cookie.secure === 'boolean' ? cookie.secure : null,
+      sameSite: typeof cookie.sameSite === 'string' && cookie.sameSite.length > 0 ? cookie.sameSite : null,
+    }));
 }
 
 function toHeaderMap(headers: readonly HeaderLike[] | null | undefined): Record<string, string> {
@@ -233,12 +270,14 @@ function buildRecordedEntry(
       method: request.method ?? null,
       url: request.url ?? null,
       headers: cloneHeaders(request.headers),
+      cookies: cloneCookies(request.cookies),
       body: typeof request.postData?.text === 'string' ? request.postData.text : null,
     },
     response: {
       status: typeof response.status === 'number' ? response.status : null,
       statusText: response.statusText ?? null,
       headers: cloneHeaders(response.headers),
+      cookies: cloneCookies(response.cookies),
       contentType: getResponseContentType(entry) || getRequestContentType(entry) || null,
       body: contentResult.body,
       encoding: contentResult.encoding,

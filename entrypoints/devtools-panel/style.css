@@ -492,19 +492,25 @@
   color: var(--ds-color-text-subtle);
 }
 
+.module-headers-table {
+  table-layout: auto;
+}
+
 .module-headers-table th:nth-child(1),
 .module-headers-table td:nth-child(1) {
-  width: 34%;
+  width: 1%;
+  white-space: nowrap;
 }
 
 .module-headers-table th:nth-child(2),
 .module-headers-table td:nth-child(2) {
-  width: 46%;
+  width: auto;
 }
 
 .module-headers-table th:nth-child(3),
 .module-headers-table td:nth-child(3) {
-  width: 20%;
+  width: 1%;
+  white-space: nowrap;
 }
 
 .module-header-name,
@@ -520,8 +526,9 @@
   align-items: center;
   gap: var(--ds-space-1);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: none;
 }
 
 .module-header-value {

@@ -401,6 +401,8 @@ function serializeRequestForExport(entry: RecordedNetworkEntry) {
   const request = entry.request ?? {};
   const response = entry.response ?? {};
   const timing = entry.timing ?? {};
+  const requestCookies = Array.isArray(request.cookies) ? request.cookies : [];
+  const responseCookies = Array.isArray(response.cookies) ? response.cookies : [];
 
   return {
     id: typeof entry.id === 'number' ? entry.id : null,
@@ -412,12 +414,32 @@ function serializeRequestForExport(entry: RecordedNetworkEntry) {
       url: typeof request.url === 'string' ? request.url : null,
       method: typeof request.method === 'string' ? request.method.toUpperCase() : null,
       headers: normalizeHeaders(request.headers),
+      cookies: requestCookies.map((cookie) => ({
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path,
+        expires: cookie.expires,
+        httpOnly: cookie.httpOnly,
+        secure: cookie.secure,
+        sameSite: cookie.sameSite,
+      })),
       body: typeof request.body === 'string' ? request.body : null,
     },
     response: {
       status: typeof response.status === 'number' ? response.status : null,
       statusText: typeof response.statusText === 'string' ? response.statusText : null,
       headers: normalizeHeaders(response.headers),
+      cookies: responseCookies.map((cookie) => ({
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path,
+        expires: cookie.expires,
+        httpOnly: cookie.httpOnly,
+        secure: cookie.secure,
+        sameSite: cookie.sameSite,
+      })),
       body: typeof response.body === 'string' ? response.body : null,
       contentType: typeof response.contentType === 'string' ? response.contentType : null,
       encoding: typeof response.encoding === 'string' ? response.encoding : null,
