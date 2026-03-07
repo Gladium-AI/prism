@@ -1,74 +1,102 @@
-import { CookieSection } from './components/CookieSection';
-import { EndpointDetails } from './components/EndpointDetails';
-import { EndpointList } from './components/EndpointList';
 import { PanelToolbar } from './components/PanelToolbar';
+import { DashboardTab, MappingTreeTab, PANEL_TABS, SequenceFlowTab, type PanelTabId } from './components/TabbedViews';
+import { useState } from 'react';
 import { usePanelController } from './usePanelController';
 
 function App() {
   const controller = usePanelController();
+  const [activeTab, setActiveTab] = useState<PanelTabId>('dashboard');
 
   return (
     <main className="panel-root">
-      <PanelToolbar
-        isSnapshot={controller.isSnapshot}
-        isCapturingCookies={controller.isCapturingCookies}
-        snapshotTime={controller.snapshotTime}
-        statusOverride={controller.statusOverride}
-        onSnapshotToggle={controller.toggleSnapshot}
-        onExportSnapshot={controller.exportSnapshot}
-        onExportMap={controller.exportMap}
-        canExportSnapshot={controller.isSnapshot}
-        canExportMap={controller.checkedCount > 0 && !controller.isExportingMap}
-        isExportingMap={controller.isExportingMap}
-        aiSettings={controller.aiSettings}
-        isAISettingsLoaded={controller.isAISettingsLoaded}
-        aiProgress={controller.aiProgress}
-        onSetAIProvider={controller.setAIProvider}
-        onSetAIEnrichmentEnabled={controller.setAIEnrichmentEnabled}
-        onSetAIApiKey={controller.setAIApiKeyForProvider}
-      />
-
-      <section className="panel-grid" aria-label="Prism API map">
-        <EndpointList
-          groups={controller.groups}
-          requestCount={controller.displayEntries.length}
-          selectedEndpointKey={controller.selectedEndpointKey}
-          checkedEndpointKeys={controller.checkedEndpointKeys}
-          collapsedSections={controller.collapsedSections}
-          mergedSchemaByKey={controller.mergedSchemaByKey}
-          graphQLOperationByKey={controller.graphQLOperationByKey}
-          onSelectEndpoint={controller.setSelectedEndpointKey}
-          onToggleChecked={(endpointKey, checked) => {
-            controller.setCheckedEndpointKeys((previous) => ({
-              ...previous,
-              [endpointKey]: checked,
-            }));
-          }}
-          onToggleSection={(sectionKey) => {
-            controller.setCollapsedSections((previous) => ({
-              ...previous,
-              [sectionKey]: !previous[sectionKey],
-            }));
-          }}
-          onSelectAll={controller.selectAll}
-          onSelectNone={controller.selectNone}
+      <div className="panel-top-chrome">
+        <PanelToolbar
+          isSnapshot={controller.isSnapshot}
+          isCapturingCookies={controller.isCapturingCookies}
+          snapshotTime={controller.snapshotTime}
+          statusOverride={controller.statusOverride}
+          onSnapshotToggle={controller.toggleSnapshot}
+          onExportSnapshot={controller.exportSnapshot}
+          onExportMap={controller.exportMap}
+          canExportSnapshot={controller.isSnapshot}
+          canExportMap={controller.checkedCount > 0 && !controller.isExportingMap}
+          isExportingMap={controller.isExportingMap}
+          aiSettings={controller.aiSettings}
+          isAISettingsLoaded={controller.isAISettingsLoaded}
+          aiProgress={controller.aiProgress}
+          onSetAIProvider={controller.setAIProvider}
+          onSetAIEnrichmentEnabled={controller.setAIEnrichmentEnabled}
+          onSetAIApiKey={controller.setAIApiKeyForProvider}
         />
 
-        <article className="pane detail-pane" aria-label="Endpoint details">
-          <EndpointDetails
-            group={controller.selectedGroup}
-            mergedSchema={controller.selectedMergedSchema}
-            graphQLOperation={controller.selectedGraphQLOperation}
-            restEndpoint={controller.selectedRestEndpoint}
+        <nav className="panel-tab-nav" aria-label="Prism panel views">
+          {PANEL_TABS.map((tab) => (
+            <button
+              className={`panel-tab-button${activeTab === tab.id ? ' active' : ''}`}
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.id ? 'true' : 'false'}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      <section className="panel-content" aria-label="Prism API map">
+        {activeTab === 'dashboard' ? (
+          <DashboardTab
+            groups={controller.groups}
+            displayEntries={controller.displayEntries}
+            selectedEndpointKey={controller.selectedEndpointKey}
+            checkedEndpointKeys={controller.checkedEndpointKeys}
+            collapsedSections={controller.collapsedSections}
+            mergedSchemaByKey={controller.mergedSchemaByKey}
+            graphQLOperationByKey={controller.graphQLOperationByKey}
+            selectedGroup={controller.selectedGroup}
+            selectedMergedSchema={controller.selectedMergedSchema}
+            selectedGraphQLOperation={controller.selectedGraphQLOperation}
+            onSelectEndpoint={controller.setSelectedEndpointKey}
+            onToggleChecked={(endpointKey, checked) => {
+              controller.setCheckedEndpointKeys((previous) => ({
+                ...previous,
+                [endpointKey]: checked,
+              }));
+            }}
+            onToggleSection={(sectionKey) => {
+              controller.setCollapsedSections((previous) => ({
+                ...previous,
+                [sectionKey]: !previous[sectionKey],
+              }));
+            }}
+            onSelectAll={controller.selectAll}
+            onSelectNone={controller.selectNone}
           />
-          <CookieSection
-            isSnapshot={controller.isSnapshot}
-            isCapturingCookies={controller.isCapturingCookies}
-            snapshotCookies={controller.snapshotCookies}
-            snapshotCookieDomain={controller.snapshotCookieDomain}
-            snapshotCookieError={controller.snapshotCookieError}
+        ) : null}
+
+        {activeTab === 'mapping-tree' ? (
+          <MappingTreeTab
+            groups={controller.groups}
+            displayEntries={controller.displayEntries}
+            selectedEndpointKey={controller.selectedEndpointKey}
+            mergedSchemaByKey={controller.mergedSchemaByKey}
+            graphQLOperationByKey={controller.graphQLOperationByKey}
+            selectedGroup={controller.selectedGroup}
+            selectedMergedSchema={controller.selectedMergedSchema}
+            selectedGraphQLOperation={controller.selectedGraphQLOperation}
+            onSelectEndpoint={controller.setSelectedEndpointKey}
           />
-        </article>
+        ) : null}
+
+        {activeTab === 'sequence-flow' ? (
+          <SequenceFlowTab
+            groups={controller.groups}
+            displayEntries={controller.displayEntries}
+            onSelectEndpoint={controller.setSelectedEndpointKey}
+          />
+        ) : null}
       </section>
     </main>
   );

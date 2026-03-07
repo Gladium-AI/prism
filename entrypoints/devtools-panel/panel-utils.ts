@@ -2,8 +2,185 @@ import { isGraphQLRequest, type EndpointGroup, type HeaderLike, type RecordedNet
 
 export type PanelEndpointGroup = EndpointGroup<RecordedNetworkEntry>;
 
+const AUTH_HEADER_NAMES = new Set([
+  'authorization',
+  'proxy-authorization',
+  'cookie',
+  'x-api-key',
+  'api-key',
+  'x-auth-token',
+  'x-access-token',
+  'x-csrf-token',
+  'x-xsrf-token',
+  'x-session-token',
+  'set-cookie',
+]);
+
+const GENERIC_PATH_SEGMENTS = new Set([
+  'api',
+  'rest',
+  'graphql',
+  'graph',
+  'v1',
+  'v2',
+  'v3',
+  'internal',
+  'public',
+  'svc',
+  'service',
+]);
+
+const GENERIC_OPERATION_WORDS = new Set([
+  'query',
+  'mutation',
+  'subscription',
+  'get',
+  'list',
+  'fetch',
+  'load',
+  'create',
+  'update',
+  'delete',
+  'set',
+  'by',
+  'for',
+  'all',
+  'use',
+]);
+
 function normalizeHeaderValue(rawValue: unknown): string {
   return rawValue == null ? '' : String(rawValue);
+}
+
+function toTitleCase(value: string): string {
+  if (!value) {
+    return value;
+  }
+  return value[0].toUpperCase() + value.slice(1).toLowerCase();
+}
+
+function splitOperationTokens(operationName: string): string[] {
+  return operationName
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[\s_-]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+}
+
+function tokenizePath(pathname: string): string[] {
+  return pathname
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.replace(/^\{(.+)\}$/, '$1'))
+    .map((segment) => segment.replace(/^\:.+$/, ''))
+    .filter((segment) => segment.length > 0);
+}
+
+function normalizeSemanticToken(token: string): string {
+  return token.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function tryExtractSemanticToken(args: {
+  operationName: string | null | undefined;
+  normalizedUrl: string | null | undefined;
+}): string | null {
+  if (typeof args.operationName === 'string' && args.operationName.trim().length > 0) {
+    const operationTokens = splitOperationTokens(args.operationName.trim());
+    for (const token of operationTokens) {
+      const normalized = normalizeSemanticToken(token);
+      if (!normalized || GENERIC_OPERATION_WORDS.has(normalized)) {
+        continue;
+      }
+      return toTitleCase(normalized);
+    }
+  }
+
+  if (typeof args.normalizedUrl !== 'string' || args.normalizedUrl.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(args.normalizedUrl);
+    const segments = tokenizePath(parsed.pathname);
+    for (const segment of segments) {
+      const normalized = normalizeSemanticToken(segment);
+      if (!normalized || GENERIC_PATH_SEGMENTS.has(normalized) || normalized.length < 2) {
+        continue;
+      }
+      return toTitleCase(normalized);
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+export function isLikelyAuthHeaderName(headerName: string | null | undefined): boolean {
+  if (typeof headerName !== 'string' || headerName.length === 0) {
+    return false;
+  }
+
+  const normalized = headerName.toLowerCase();
+  if (AUTH_HEADER_NAMES.has(normalized)) {
+    return true;
+  }
+
+  return (
+    normalized.startsWith('x-auth-') ||
+    normalized.startsWith('x-api-') ||
+    normalized.includes('token') ||
+    normalized.includes('session')
+  );
+}
+
+export function truncateValue(value: string, maxLength = 78): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  if (maxLength <= 1) {
+    return '…';
+  }
+  return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+export function redactSensitiveValue(value: string): string {
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    return '(empty)';
+  }
+
+  if (normalized.length <= 6) {
+    return `${normalized[0] ?? ''}•••${normalized.slice(-1)}`;
+  }
+
+  const prefix = normalized.slice(0, 4);
+  const suffix = normalized.slice(-3);
+  return `${prefix}••••${suffix}`;
+}
+
+export function inferSemanticGroup(args: {
+  normalizedUrl: string | null | undefined;
+  operationName: string | null | undefined;
+  apiType: 'graphql' | 'rest';
+}): { label: string; isInferred: boolean } {
+  const semanticToken = tryExtractSemanticToken({
+    operationName: args.operationName,
+    normalizedUrl: args.normalizedUrl,
+  });
+
+  if (!semanticToken) {
+    return {
+      label: args.apiType === 'graphql' ? 'Core GraphQL API' : 'Core REST API',
+      isInferred: false,
+    };
+  }
+
+  return {
+    label: `${semanticToken} ${args.apiType === 'graphql' ? 'GraphQL API' : 'REST API'}`,
+    isInferred: true,
+  };
 }
 
 export function buildHeaderValuesMap(
