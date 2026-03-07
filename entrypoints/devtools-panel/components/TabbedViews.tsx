@@ -25,7 +25,6 @@ import {
   getMethodClass,
   inferSemanticGroup,
   isLikelyAuthHeaderName,
-  redactSensitiveValue,
   truncateValue,
   type PanelEndpointGroup,
 } from '../panel-utils';
@@ -49,13 +48,26 @@ const methodBadgeVariantByClass = {
 type MethodClass = keyof typeof methodBadgeVariantByClass;
 
 type GraphQLOperationExplorerTab = 'schema' | 'explorer';
-type SequenceDetailTab = 'headers' | 'auth' | 'graphql' | 'variables' | 'incoming' | 'response-headers';
+type SequenceDetailTab =
+  | 'headers'
+  | 'auth'
+  | 'cookies'
+  | 'graphql'
+  | 'variables'
+  | 'incoming'
+  | 'response-headers';
 
 interface HeaderPreviewRow {
   name: string;
   value: string;
   type: string;
   isAuth: boolean;
+}
+
+interface CookieSignalRow {
+  name: string;
+  value: string;
+  observedCount: number;
 }
 
 interface DashboardTabProps {
@@ -114,6 +126,119 @@ interface MappingTreeBranch {
 
 function normalizeHeaderValue(rawValue: unknown): string {
   return rawValue == null ? '' : String(rawValue);
+}
+
+function parseCookiePair(rawPair: string): { name: string; value: string } | null {
+  const normalized = rawPair.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const separatorIndex = normalized.indexOf('=');
+  if (separatorIndex < 0) {
+    return null;
+  }
+
+  const name = normalized.slice(0, separatorIndex).trim();
+  const value = normalized.slice(separatorIndex + 1).trim();
+  if (!name) {
+    return null;
+  }
+
+  return { name, value };
+}
+
+function addCookieSignal(
+  map: Map<string, CookieSignalRow>,
+  signal: { name: string; value: string },
+): void {
+  const key = `${signal.name}\u0000${signal.value}`;
+  const existing = map.get(key);
+  if (existing) {
+    existing.observedCount += 1;
+    return;
+  }
+
+  map.set(key, {
+    name: signal.name,
+    value: signal.value,
+    observedCount: 1,
+  });
+}
+
+function sortCookieSignals(rows: Iterable<CookieSignalRow>): CookieSignalRow[] {
+  return Array.from(rows).sort((left, right) => {
+    const countDiff = right.observedCount - left.observedCount;
+    if (countDiff !== 0) {
+      return countDiff;
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
+function extractSentCookieSignalsFromHeaders(headers: readonly HeaderLike[]): CookieSignalRow[] {
+  const map = new Map<string, CookieSignalRow>();
+
+  for (const header of headers) {
+    if (!header || header.name.toLowerCase() !== 'cookie') {
+      continue;
+    }
+
+    const value = normalizeHeaderValue(header.value);
+    const pieces = value.split(';');
+    for (const piece of pieces) {
+      const parsedPair = parseCookiePair(piece);
+      if (!parsedPair) {
+        continue;
+      }
+      addCookieSignal(map, parsedPair);
+    }
+  }
+
+  return sortCookieSignals(map.values());
+}
+
+function extractCapturedCookieSignalsFromHeaders(headers: readonly HeaderLike[]): CookieSignalRow[] {
+  const map = new Map<string, CookieSignalRow>();
+
+  for (const header of headers) {
+    if (!header || header.name.toLowerCase() !== 'set-cookie') {
+      continue;
+    }
+
+    const value = normalizeHeaderValue(header.value);
+    const firstSegment = value.split(';')[0] ?? '';
+    const parsedPair = parseCookiePair(firstSegment);
+    if (!parsedPair) {
+      continue;
+    }
+
+    addCookieSignal(map, parsedPair);
+  }
+
+  return sortCookieSignals(map.values());
+}
+
+function collectCookieSignals(entries: readonly RecordedNetworkEntry[]): {
+  sent: CookieSignalRow[];
+  captured: CookieSignalRow[];
+} {
+  const sentMap = new Map<string, CookieSignalRow>();
+  const capturedMap = new Map<string, CookieSignalRow>();
+
+  for (const entry of entries) {
+    for (const cookie of extractSentCookieSignalsFromHeaders(entry.request.headers)) {
+      addCookieSignal(sentMap, { name: cookie.name, value: cookie.value });
+    }
+    for (const cookie of extractCapturedCookieSignalsFromHeaders(entry.response.headers)) {
+      addCookieSignal(capturedMap, { name: cookie.name, value: cookie.value });
+    }
+  }
+
+  return {
+    sent: sortCookieSignals(sentMap.values()),
+    captured: sortCookieSignals(capturedMap.values()),
+  };
 }
 
 function inferValueType(value: string): string {
@@ -268,13 +393,11 @@ function HeaderPreviewTable({
   rows,
   emptyMessage,
   showAuthBadge = false,
-  redactAuthValues = false,
   className,
 }: {
   rows: HeaderPreviewRow[];
   emptyMessage: string;
   showAuthBadge?: boolean;
-  redactAuthValues?: boolean;
   className?: string;
 }) {
   if (!rows.length) {
@@ -293,11 +416,10 @@ function HeaderPreviewTable({
       <DataTableBody>
         {rows.map((row) => {
           const safeValue = row.value.length > 0 ? row.value : '(empty)';
-          const redactedValue = redactAuthValues && row.isAuth ? redactSensitiveValue(safeValue) : safeValue;
-          const previewValue = truncateValue(redactedValue, 96);
+          const displayValue = row.isAuth ? safeValue : truncateValue(safeValue, 96);
 
           return (
-            <DataTableRow key={`${row.name}-${row.type}-${previewValue}`}>
+            <DataTableRow key={`${row.name}-${row.type}-${displayValue}`}>
               <DataTableCell className="module-header-name">
                 {row.name}
                 {showAuthBadge && row.isAuth ? (
@@ -306,8 +428,8 @@ function HeaderPreviewTable({
                   </Badge>
                 ) : null}
               </DataTableCell>
-              <DataTableCell className="module-header-value" title={redactedValue}>
-                {previewValue}
+              <DataTableCell className="module-header-value" title={safeValue}>
+                {displayValue}
               </DataTableCell>
               <DataTableCell className="module-header-type">{row.type}</DataTableCell>
             </DataTableRow>
@@ -315,6 +437,39 @@ function HeaderPreviewTable({
         })}
       </DataTableBody>
     </DataTable>
+  );
+}
+
+function CookiesSignalList({
+  title,
+  rows,
+  emptyMessage,
+}: {
+  title: string;
+  rows: CookieSignalRow[];
+  emptyMessage: string;
+}) {
+  return (
+    <section className="cookie-signal-group">
+      <p className="module-subsection-title">{title}</p>
+      {!rows.length ? (
+        <div className="empty-state module-empty-state">{emptyMessage}</div>
+      ) : (
+        <div className="cookie-signal-list">
+          {rows.map((row) => (
+            <article className="cookie-signal-row" key={`${row.name}\u0000${row.value}`}>
+              <div className="cookie-signal-head">
+                <span className="cookie-signal-name">{row.name}</span>
+                <Badge variant="counter" uppercase={false}>
+                  {row.observedCount}
+                </Badge>
+              </div>
+              <code className="cookie-signal-value">{row.value || '(empty)'}</code>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -338,6 +493,10 @@ function EndpointDetailsModules({
   }, [selectedGroup?.endpointKey]);
 
   const sessionAuthHeaders = useMemo(() => collectSessionAuthHeaders(displayEntries), [displayEntries]);
+  const endpointCookieSignals = useMemo(
+    () => collectCookieSignals(selectedGroup?.entries ?? []),
+    [selectedGroup],
+  );
 
   if (!selectedGroup) {
     return (
@@ -412,18 +571,36 @@ function EndpointDetailsModules({
                   </Badge>
                 </div>
                 <div className="auth-value-list">
-                  {header.values.slice(0, 3).map((value) => (
+                  {header.values.map((value) => (
                     <code key={`${header.name}-${value}`} className="auth-value-pill">
-                      {redactSensitiveValue(value)}
+                      {value.length > 0 ? value : '(empty)'}
                     </code>
                   ))}
-                  {header.values.length > 3 ? (
-                    <span className="auth-value-more">+{header.values.length - 3} more values</span>
-                  ) : null}
                 </div>
               </article>
             ))
           )}
+        </div>
+      </section>
+
+      <section className="module-card">
+        <header className="module-header">
+          <h3>Cookies</h3>
+          <Badge variant="count" uppercase={false}>
+            {endpointCookieSignals.sent.length + endpointCookieSignals.captured.length}
+          </Badge>
+        </header>
+        <div className="module-body cookie-signal-stack">
+          <CookiesSignalList
+            title="Sent Cookies"
+            rows={endpointCookieSignals.sent}
+            emptyMessage="No request Cookie headers observed on this endpoint."
+          />
+          <CookiesSignalList
+            title="Captured Cookies"
+            rows={endpointCookieSignals.captured}
+            emptyMessage="No Set-Cookie headers observed on this endpoint."
+          />
         </div>
       </section>
 
@@ -507,7 +684,6 @@ function EndpointDetailsModules({
             rows={requestHeaderRows}
             emptyMessage="No request headers observed on the selected endpoint."
             showAuthBadge={true}
-            redactAuthValues={true}
           />
         </div>
       </section>
@@ -996,6 +1172,12 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
   const selectedRequestHeaders = selectedEntry ? toHeaderPreviewRowsFromRaw(selectedEntry.request.headers) : [];
   const selectedResponseHeaders = selectedEntry ? toHeaderPreviewRowsFromRaw(selectedEntry.response.headers) : [];
   const selectedAuthHeaders = selectedRequestHeaders.filter((row) => row.isAuth);
+  const selectedSentCookies = selectedEntry
+    ? extractSentCookieSignalsFromHeaders(selectedEntry.request.headers)
+    : [];
+  const selectedCapturedCookies = selectedEntry
+    ? extractCapturedCookieSignalsFromHeaders(selectedEntry.response.headers)
+    : [];
 
   return (
     <section className="sequence-view" aria-label="Sequence flow view">
@@ -1106,6 +1288,7 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
                 {[
                   { id: 'headers', label: 'Headers' },
                   { id: 'auth', label: 'Auth' },
+                  { id: 'cookies', label: 'Cookies' },
                   { id: 'graphql', label: 'GraphQL' },
                   { id: 'variables', label: 'Variables' },
                   { id: 'incoming', label: 'Incoming' },
@@ -1149,7 +1332,6 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
                     rows={selectedRequestHeaders}
                     emptyMessage="No request headers observed."
                     showAuthBadge={true}
-                    redactAuthValues={true}
                   />
                 ) : null}
 
@@ -1158,8 +1340,22 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
                     rows={selectedAuthHeaders}
                     emptyMessage="No auth headers observed for this request."
                     showAuthBadge={true}
-                    redactAuthValues={true}
                   />
+                ) : null}
+
+                {detailTab === 'cookies' ? (
+                  <div className="cookie-signal-stack">
+                    <CookiesSignalList
+                      title="Sent Cookies"
+                      rows={selectedSentCookies}
+                      emptyMessage="No request Cookie headers on this request."
+                    />
+                    <CookiesSignalList
+                      title="Captured Cookies"
+                      rows={selectedCapturedCookies}
+                      emptyMessage="No Set-Cookie headers on this request."
+                    />
+                  </div>
                 ) : null}
 
                 {detailTab === 'graphql' ? (
@@ -1220,7 +1416,6 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
                     rows={selectedResponseHeaders}
                     emptyMessage="No response headers observed."
                     showAuthBadge={false}
-                    redactAuthValues={false}
                   />
                 ) : null}
               </div>

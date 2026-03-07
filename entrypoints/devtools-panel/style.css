@@ -494,12 +494,12 @@
 
 .module-headers-table th:nth-child(1),
 .module-headers-table td:nth-child(1) {
-  width: 28%;
+  width: 34%;
 }
 
 .module-headers-table th:nth-child(2),
 .module-headers-table td:nth-child(2) {
-  width: 52%;
+  width: 46%;
 }
 
 .module-headers-table th:nth-child(3),
@@ -512,7 +512,6 @@
 .module-header-type {
   font-family: var(--ds-font-family-mono);
   font-size: var(--ds-font-size-xs);
-  overflow-wrap: anywhere;
 }
 
 .module-header-name {
@@ -520,10 +519,16 @@
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .module-header-value {
   color: var(--ds-color-neutral-200);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .module-header-type {
@@ -575,14 +580,56 @@
   color: var(--ds-color-danger);
   padding: 0.1rem var(--ds-space-2);
   font-size: var(--ds-font-size-xs);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
-.auth-value-more {
+.cookie-signal-stack {
+  display: grid;
+  gap: var(--ds-space-3);
+}
+
+.cookie-signal-group {
+  display: grid;
+  gap: var(--ds-space-2);
+}
+
+.cookie-signal-list {
+  display: grid;
+  gap: var(--ds-space-2);
+}
+
+.cookie-signal-row {
+  border: 1px solid var(--ds-color-border-soft);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-color-bg);
+  padding: var(--ds-space-2);
+  display: grid;
+  gap: var(--ds-space-2);
+}
+
+.cookie-signal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+}
+
+.cookie-signal-name {
+  font-family: var(--ds-font-family-mono);
   font-size: var(--ds-font-size-xs);
-  color: var(--ds-color-text-subtle);
+  color: var(--ds-color-text);
+  overflow-wrap: anywhere;
+}
+
+.cookie-signal-value {
+  margin: 0;
+  font-family: var(--ds-font-family-mono);
+  font-size: var(--ds-font-size-xs);
+  color: var(--ds-color-neutral-200);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .graphql-schema-stack,
