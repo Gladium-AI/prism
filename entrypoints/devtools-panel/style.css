@@ -614,21 +614,15 @@
 .auth-value-pill {
   display: inline-block;
   margin: 0;
-  border: 1px solid color-mix(in srgb, var(--ds-color-danger) 50%, transparent);
+  border: 1px solid var(--ds-color-border);
   border-radius: var(--ds-radius-sm);
-  background: var(--ds-color-overlay-danger);
-  color: var(--ds-color-danger);
+  background: var(--ds-color-bg-soft);
+  color: var(--ds-color-neutral-200);
   padding: 0.1rem var(--ds-space-2);
   font-size: var(--ds-font-size-xs);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
-}
-
-.auth-value-pill--neutral {
-  border-color: var(--ds-color-border);
-  background: var(--ds-color-bg-soft);
-  color: var(--ds-color-neutral-200);
 }
 
 .cookie-signal-stack {

@@ -680,30 +680,23 @@ function EndpointDetailsModules({
             {!sessionAuthHeaders.length ? (
               <div className="empty-state module-empty-state">No auth headers observed in this session.</div>
             ) : (
-              sessionAuthHeaders.map((header) => {
-                const isCookieHeader = header.name.toLowerCase() === 'cookie';
-
-                return (
-                  <article className="auth-value-row" key={header.name}>
-                    <div className="auth-value-head">
-                      <span className="auth-value-name">{header.name}</span>
-                      <Badge variant="counter" uppercase={false}>
-                        {header.observationCount}
-                      </Badge>
-                    </div>
-                    <div className="auth-value-list">
-                      {header.values.map((value) => (
-                        <code
-                          key={`${header.name}-${value}`}
-                          className={`auth-value-pill${isCookieHeader ? ' auth-value-pill--neutral' : ''}`}
-                        >
-                          {value.length > 0 ? value : '(empty)'}
-                        </code>
-                      ))}
-                    </div>
-                  </article>
-                );
-              })
+              sessionAuthHeaders.map((header) => (
+                <article className="auth-value-row" key={header.name}>
+                  <div className="auth-value-head">
+                    <span className="auth-value-name">{header.name}</span>
+                    <Badge variant="counter" uppercase={false}>
+                      {header.observationCount}
+                    </Badge>
+                  </div>
+                  <div className="auth-value-list">
+                    {header.values.map((value) => (
+                      <code key={`${header.name}-${value}`} className="auth-value-pill">
+                        {value.length > 0 ? value : '(empty)'}
+                      </code>
+                    ))}
+                  </div>
+                </article>
+              ))
             )}
           </div>
         )}
