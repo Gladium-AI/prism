@@ -1,5 +1,26 @@
 (function initPanel(globalScope) {
   var POLL_INTERVAL_MS = 400;
+  var STORAGE_KEY_MEDIA_FILTER = "gladium_hideMediaEndpoints";
+
+  function loadMediaFilterPreference() {
+    try {
+      var stored = localStorage.getItem(STORAGE_KEY_MEDIA_FILTER);
+      if (stored === null) {
+        return true;
+      }
+      return stored !== "false";
+    } catch (e) {
+      return true;
+    }
+  }
+
+  function saveMediaFilterPreference(value) {
+    try {
+      localStorage.setItem(STORAGE_KEY_MEDIA_FILTER, String(value));
+    } catch (e) {
+      // silently ignore storage errors
+    }
+  }
 
   var elements = {
     snapshotButton: document.getElementById("snapshot-toggle"),
@@ -22,7 +43,7 @@
     snapshotTime: null,
     selectedEndpointKey: null,
     checkedEndpointKeys: {},
-    hideMediaEndpoints: true,
+    hideMediaEndpoints: loadMediaFilterPreference(),
     liveEntries: [],
     snapshotEntries: [],
     snapshotCookies: [],
@@ -1632,6 +1653,7 @@
     if (elements.mediaFilterButton) {
       elements.mediaFilterButton.addEventListener("click", function () {
         state.hideMediaEndpoints = !state.hideMediaEndpoints;
+        saveMediaFilterPreference(state.hideMediaEndpoints);
         state.lastListSignature = "";
         render();
       });
