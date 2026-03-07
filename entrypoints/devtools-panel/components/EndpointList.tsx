@@ -1,5 +1,5 @@
 import { Badge, Button, type BadgeVariant, Tooltip } from '@/src/design-system';
-import type { SchemaObservation } from '@/core';
+import type { MergedGraphQLOperation, SchemaObservation } from '@/core';
 import {
   classifyGroups,
   getCompactPath,
@@ -15,6 +15,7 @@ interface EndpointListProps {
   checkedEndpointKeys: Record<string, boolean>;
   collapsedSections: Record<string, boolean>;
   mergedSchemaByKey: Record<string, SchemaObservation | null>;
+  graphQLOperationByKey: Record<string, MergedGraphQLOperation | null>;
   onSelectEndpoint(endpointKey: string): void;
   onToggleChecked(endpointKey: string, checked: boolean): void;
   onToggleSection(sectionKey: 'graphql' | 'rest'): void;
@@ -57,6 +58,7 @@ function EndpointRow({
   selectedEndpointKey,
   checkedEndpointKeys,
   mergedSchema,
+  graphQLOperation,
   onSelectEndpoint,
   onToggleChecked,
 }: {
@@ -64,6 +66,7 @@ function EndpointRow({
   selectedEndpointKey: string | null;
   checkedEndpointKeys: Record<string, boolean>;
   mergedSchema: SchemaObservation | null;
+  graphQLOperation: MergedGraphQLOperation | null;
   onSelectEndpoint(endpointKey: string): void;
   onToggleChecked(endpointKey: string, checked: boolean): void;
 }) {
@@ -75,6 +78,9 @@ function EndpointRow({
   const methodClass = getMethodClass(method);
   const hasAuth =
     mergedSchema?.request?.headers?.fields?.some((field) => field.isAuth === true) ?? false;
+  const graphQLOperationLabel = graphQLOperation?.operationName ?? group.endpointKey;
+  const graphQLOperationType = graphQLOperation?.operationType ?? 'unknown';
+  const rowLabel = graphQLOperation ? graphQLOperationLabel : path;
 
   return (
     <div
@@ -95,9 +101,14 @@ function EndpointRow({
         />
 
         <Badge variant={badgeVariantByMethodClass[methodClass]}>{method}</Badge>
+        {graphQLOperation ? (
+          <Badge variant="info" uppercase={false}>
+            {graphQLOperationType}
+          </Badge>
+        ) : null}
 
         <span className="endpoint-path" title={group.endpointKey}>
-          {path}
+          {rowLabel}
           {hasAuth ? (
             <Tooltip label="Auth headers detected on this endpoint">
               <span className="auth-indicator" aria-label="Auth headers detected on this endpoint">
@@ -111,6 +122,11 @@ function EndpointRow({
           {observationCount}
         </Badge>
       </div>
+      {graphQLOperation && group.normalizedUrl ? (
+        <div className="endpoint-subpath" title={path}>
+          {path}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -122,6 +138,7 @@ export function EndpointList({
   checkedEndpointKeys,
   collapsedSections,
   mergedSchemaByKey,
+  graphQLOperationByKey,
   onSelectEndpoint,
   onToggleChecked,
   onToggleSection,
@@ -178,6 +195,7 @@ export function EndpointList({
                     selectedEndpointKey={selectedEndpointKey}
                     checkedEndpointKeys={checkedEndpointKeys}
                     mergedSchema={mergedSchemaByKey[group.endpointKey]}
+                    graphQLOperation={graphQLOperationByKey[group.endpointKey] ?? null}
                     onSelectEndpoint={onSelectEndpoint}
                     onToggleChecked={onToggleChecked}
                   />
@@ -197,6 +215,7 @@ export function EndpointList({
                     selectedEndpointKey={selectedEndpointKey}
                     checkedEndpointKeys={checkedEndpointKeys}
                     mergedSchema={mergedSchemaByKey[group.endpointKey]}
+                    graphQLOperation={graphQLOperationByKey[group.endpointKey] ?? null}
                     onSelectEndpoint={onSelectEndpoint}
                     onToggleChecked={onToggleChecked}
                   />
@@ -210,6 +229,7 @@ export function EndpointList({
               selectedEndpointKey={selectedEndpointKey}
               checkedEndpointKeys={checkedEndpointKeys}
               mergedSchema={mergedSchemaByKey[group.endpointKey]}
+              graphQLOperation={graphQLOperationByKey[group.endpointKey] ?? null}
               onSelectEndpoint={onSelectEndpoint}
               onToggleChecked={onToggleChecked}
             />

@@ -7,6 +7,7 @@ export interface RequestLike {
   method?: string | null;
   url?: string | null;
   headers?: readonly HeaderLike[] | null;
+  body?: string | null;
 }
 
 export interface EndpointEntryLike {

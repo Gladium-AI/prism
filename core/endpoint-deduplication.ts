@@ -1,4 +1,5 @@
 import type { EndpointEntryLike, EndpointGroup } from './types';
+import { parseGraphQLOperation } from './graphql-operation';
 import { endpointKey, normalizeUrl } from './url-normalizer';
 
 export function deduplicateEntries<TEntry extends EndpointEntryLike>(
@@ -12,7 +13,8 @@ export function deduplicateEntries<TEntry extends EndpointEntryLike>(
 
   for (const entry of entries) {
     const request = entry.request ?? {};
-    const key = endpointKey(request.method, request.url);
+    const graphQLOperation = parseGraphQLOperation(request);
+    const key = graphQLOperation ? graphQLOperation.operationKey : endpointKey(request.method, request.url);
 
     if (!(key in groups)) {
       groups[key] = {
@@ -22,6 +24,10 @@ export function deduplicateEntries<TEntry extends EndpointEntryLike>(
         entries: [],
       };
       order.push(key);
+    }
+
+    if (!groups[key].normalizedUrl && typeof request.url === 'string') {
+      groups[key].normalizedUrl = normalizeUrl(request.url);
     }
 
     groups[key].entries.push(entry);

@@ -96,6 +96,47 @@ function SchemaFields({ schema, depth }: { schema: JsonSchema; depth: number }) 
   );
 }
 
+export function JsonSchemaTree({ schema }: { schema: JsonSchema | null | undefined }) {
+  if (!schema) {
+    return <div className="schema-note">No schema detected</div>;
+  }
+
+  if (schema.type === 'object') {
+    return (
+      <div className="schema-tree">
+        <SchemaFields schema={schema} depth={0} />
+      </div>
+    );
+  }
+
+  if (schema.type === 'array') {
+    return (
+      <div className="schema-tree">
+        <div className="schema-field">
+          <span className="schema-type">
+            <SchemaTypeLabel schema={schema} />
+          </span>
+        </div>
+        {schema.items && schema.items.type === 'object' && schema.items.fields ? (
+          <div className="schema-indent">
+            <SchemaFields schema={schema.items} depth={1} />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="schema-tree">
+      <div className="schema-field">
+        <span className="schema-type">
+          <SchemaTypeLabel schema={schema} />
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function BodySchemaView({ bodySchema }: { bodySchema: BodySchema | null | undefined }) {
   if (!bodySchema) {
     return <div className="schema-note">No body detected</div>;
@@ -112,33 +153,8 @@ export function BodySchemaView({ bodySchema }: { bodySchema: BodySchema | null |
         ) : bodySchema.contentType === 'opaque' ? (
           <div className="schema-note">Non-structured body</div>
         ) : null
-      ) : bodySchema.schema.type === 'object' ? (
-        <div className="schema-tree">
-          <SchemaFields schema={bodySchema.schema} depth={0} />
-        </div>
-      ) : bodySchema.schema.type === 'array' ? (
-        <div className="schema-tree">
-          <div className="schema-field">
-            <span className="schema-type">
-              <SchemaTypeLabel schema={bodySchema.schema} />
-            </span>
-          </div>
-          {bodySchema.schema.items &&
-          bodySchema.schema.items.type === 'object' &&
-          bodySchema.schema.items.fields ? (
-            <div className="schema-indent">
-              <SchemaFields schema={bodySchema.schema.items} depth={1} />
-            </div>
-          ) : null}
-        </div>
       ) : (
-        <div className="schema-tree">
-          <div className="schema-field">
-            <span className="schema-type">
-              <SchemaTypeLabel schema={bodySchema.schema} />
-            </span>
-          </div>
-        </div>
+        <JsonSchemaTree schema={bodySchema.schema} />
       )}
     </>
   );
