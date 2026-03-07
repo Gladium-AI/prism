@@ -103,7 +103,7 @@ export function PanelToolbar({
                 disabled={!canExportMap}
                 onClick={handleExportMap}
               >
-                Endpoint Map JSON
+                Structured Bundle (.zip)
               </Button>
             </div>
           ) : null}
