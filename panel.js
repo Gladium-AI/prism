@@ -280,6 +280,16 @@
     return `gladium-snapshot-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
   }
 
+  function getMergedEndpointSchema(group) {
+    const merger = globalScope.GladiumSchemaMerger;
+    if (!merger || typeof merger.mergeEndpointGroup !== "function") {
+      return null;
+    }
+
+    const result = merger.mergeEndpointGroup(group);
+    return result ? result.schema : null;
+  }
+
   function buildEndpointsSummary(entries) {
     const normalizer = globalScope.GladiumUrlNormalizer;
     if (!normalizer || typeof normalizer.deduplicateEntries !== "function") {
@@ -295,8 +305,9 @@
         endpointKey: group.endpointKey,
         normalizedUrl: group.normalizedUrl,
         method: group.method,
-        requestCount: group.entries.length,
+        observationCount: group.entries.length,
         maxScore: maxScore,
+        mergedSchema: getMergedEndpointSchema(group),
         requestIds: group.entries.map(function (entry) {
           return entry && typeof entry.id === "number" ? entry.id : null;
         }),
