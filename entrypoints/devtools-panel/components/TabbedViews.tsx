@@ -956,13 +956,22 @@ function stringifyJson(value: unknown): string {
 }
 
 function getSequenceEntryKind(entry: RecordedNetworkEntry): 'graphql' | 'rest' | 'auth' {
-  const hasAuthHeader = entry.request.headers.some((header) => isLikelyAuthHeaderName(header.name));
-  if (hasAuthHeader) {
-    return 'auth';
-  }
   if (isGraphQLRequest(entry.request)) {
     return 'graphql';
   }
+
+  const hasRequestAuthHeader = entry.request.headers.some((header) => isLikelyAuthHeaderName(header.name));
+  const hasResponseAuthCookie = entry.response.headers.some((header) => {
+    if (!header || typeof header.name !== 'string') {
+      return false;
+    }
+    return header.name.toLowerCase() === 'set-cookie';
+  });
+
+  if (hasRequestAuthHeader || hasResponseAuthCookie) {
+    return 'auth';
+  }
+
   return 'rest';
 }
 

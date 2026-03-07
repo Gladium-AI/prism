@@ -1133,12 +1133,31 @@
 }
 
 .sequence-marker.active .sequence-marker-dot {
-  box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.2);
   transform: scale(1.06);
 }
 
-.sequence-marker.active .sequence-marker-time {
-  color: var(--ds-color-primary);
+.sequence-marker.graphql.active .sequence-marker-dot {
+  box-shadow: 0 0 0 0.2rem rgba(255, 147, 79, 0.2);
+}
+
+.sequence-marker.rest.active .sequence-marker-dot {
+  box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.2);
+}
+
+.sequence-marker.auth.active .sequence-marker-dot {
+  box-shadow: 0 0 0 0.2rem rgba(255, 111, 110, 0.2);
+}
+
+.sequence-marker.graphql.active .sequence-marker-time {
+  color: rgba(255, 147, 79, 0.95);
+}
+
+.sequence-marker.rest.active .sequence-marker-time {
+  color: rgba(0, 212, 170, 0.95);
+}
+
+.sequence-marker.auth.active .sequence-marker-time {
+  color: rgba(255, 111, 110, 0.95);
 }
 
 .sequence-marker-legend {
@@ -1216,15 +1235,15 @@
 }
 
 .sequence-kind-chip.graphql {
-  background: var(--ds-color-warning);
+  background: rgba(255, 147, 79, 0.88);
 }
 
 .sequence-kind-chip.rest {
-  background: var(--ds-color-primary);
+  background: rgba(0, 212, 170, 0.88);
 }
 
 .sequence-kind-chip.auth {
-  background: var(--ds-color-danger);
+  background: rgba(255, 111, 110, 0.88);
 }
 
 .sequence-overview-rank,
