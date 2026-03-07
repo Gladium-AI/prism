@@ -6,3 +6,4 @@ export * from './schema-merger';
 export * from './graphql-operation';
 export * from './rest-endpoint';
 export * from './request-recorder';
+export * from './noise-filter';

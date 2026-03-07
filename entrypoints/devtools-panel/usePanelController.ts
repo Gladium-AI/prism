@@ -6,12 +6,14 @@ import {
   mergeEndpointGroup,
   mergeGraphQLOperationsFromEntries,
   mergeRestEndpointGroup,
+  shouldRecord,
   type BodySchema,
   type GraphQLSelectionField,
   type HeaderField,
   type JsonSchema,
   type MergedGraphQLOperation,
   type MergedRestEndpoint,
+  type NoiseFilterSettings,
   type RecordedNetworkEntry,
   type RequestRecorder,
   type RestPathParameter,
@@ -47,6 +49,11 @@ import {
   type AIProvider,
 } from './ai-settings';
 import type { AIEnrichmentBatchResult, EndpointForAIEnrichment } from './ai-enrichment';
+import {
+  loadNoiseFilterSettings,
+  normalizeNoiseFilterSettings,
+  saveNoiseFilterSettings,
+} from './noise-filter-settings';
 
 const POLL_INTERVAL_MS = 400;
 
@@ -1012,12 +1019,21 @@ export function usePanelController() {
   const [isAISettingsLoaded, setIsAISettingsLoaded] = useState(false);
   const [isExportingMap, setIsExportingMap] = useState(false);
   const [aiProgress, setAIProgress] = useState<AIEnrichmentProgress | null>(null);
+  const [noiseFilterSettings, setNoiseFilterSettings] = useState<NoiseFilterSettings>(() => loadNoiseFilterSettings());
 
   const recorderRef = useRef<RequestRecorder | null>(null);
   const snapshotCaptureIdRef = useRef(0);
+  const noiseFilterSettingsRef = useRef<NoiseFilterSettings>(noiseFilterSettings);
 
   useEffect(() => {
-    const recorder = createRequestRecorder(browser);
+    noiseFilterSettingsRef.current = noiseFilterSettings;
+    saveNoiseFilterSettings(noiseFilterSettings);
+  }, [noiseFilterSettings]);
+
+  useEffect(() => {
+    const recorder = createRequestRecorder(browser, {
+      shouldRecord: (entry) => shouldRecord(entry, noiseFilterSettingsRef.current),
+    });
     recorder.start();
     recorderRef.current = recorder;
 
@@ -1159,6 +1175,17 @@ export function usePanelController() {
       }
       return next;
     });
+  }, []);
+
+  const setNoiseFilterEnabled = useCallback((enabled: boolean) => {
+    setNoiseFilterSettings((previous) => ({
+      ...previous,
+      enabled,
+    }));
+  }, []);
+
+  const applyNoiseFilterSettings = useCallback((nextSettings: NoiseFilterSettings) => {
+    setNoiseFilterSettings(normalizeNoiseFilterSettings(nextSettings));
   }, []);
 
   const persistAISettings = useCallback(async (nextSettings: AIEnrichmentSettings) => {
@@ -1400,6 +1427,7 @@ export function usePanelController() {
     statusOverride,
     aiSettings,
     isAISettingsLoaded,
+    noiseFilterSettings,
     aiProgress,
     checkedCount,
     setSelectedEndpointKey,
@@ -1408,6 +1436,8 @@ export function usePanelController() {
     setAIProvider,
     setAIEnrichmentEnabled,
     setAIApiKeyForProvider,
+    setNoiseFilterEnabled,
+    applyNoiseFilterSettings,
     selectAll,
     selectNone,
     toggleSnapshot,

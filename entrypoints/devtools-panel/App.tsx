@@ -23,10 +23,13 @@ function App() {
           isExportingMap={controller.isExportingMap}
           aiSettings={controller.aiSettings}
           isAISettingsLoaded={controller.isAISettingsLoaded}
+          noiseFilterSettings={controller.noiseFilterSettings}
           aiProgress={controller.aiProgress}
           onSetAIProvider={controller.setAIProvider}
           onSetAIEnrichmentEnabled={controller.setAIEnrichmentEnabled}
           onSetAIApiKey={controller.setAIApiKeyForProvider}
+          onSetNoiseFilterEnabled={controller.setNoiseFilterEnabled}
+          onApplyNoiseFilterSettings={controller.applyNoiseFilterSettings}
         />
 
         <nav className="panel-tab-nav" aria-label="Prism panel views">

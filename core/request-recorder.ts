@@ -48,6 +48,10 @@ export interface RequestRecorder {
   getEntries(): RecordedNetworkEntry[];
 }
 
+export interface RequestRecorderOptions {
+  shouldRecord?: (entry: DevtoolsNetworkRequestEntryLike) => boolean;
+}
+
 function toSafeArray<T>(value: readonly T[] | null | undefined): readonly T[] {
   return Array.isArray(value) ? value : (EMPTY_ARRAY as readonly T[]);
 }
@@ -295,14 +299,27 @@ function getDefaultBrowser(): BrowserLike | undefined {
   return globalValue.browser;
 }
 
-export function createRequestRecorder(targetBrowser: BrowserLike | undefined = getDefaultBrowser()): RequestRecorder {
+export function createRequestRecorder(
+  targetBrowser: BrowserLike | undefined = getDefaultBrowser(),
+  options: RequestRecorderOptions = {},
+): RequestRecorder {
   const state: RecorderState = {
     entries: [],
     isListening: false,
     nextId: 1,
   };
 
+  const shouldRecord = typeof options.shouldRecord === 'function' ? options.shouldRecord : () => true;
+
   const handleRequestFinished = async (entry: DevtoolsNetworkRequestEntryLike): Promise<void> => {
+    try {
+      if (!shouldRecord(entry)) {
+        return;
+      }
+    } catch {
+      // Keep recorder resilient to filter predicate failures.
+    }
+
     const contentResult = await getContent(entry);
     const recorded = buildRecordedEntry(entry, contentResult, state.nextId);
     state.nextId += 1;

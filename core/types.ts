@@ -145,8 +145,11 @@ export interface DevtoolsResponseLike {
   statusText?: string | null;
   headers?: readonly HeaderLike[] | null;
   cookies?: readonly CookieLike[] | null;
+  bodySize?: number | null;
   content?: {
     mimeType?: string;
+    size?: number | null;
+    text?: string | null;
   } | null;
 }
 
@@ -155,6 +158,7 @@ export interface DevtoolsNetworkRequestEntryLike {
   response?: DevtoolsResponseLike | null;
   startedDateTime?: string | null;
   time?: number | null;
+  _resourceType?: string | null;
   getContent?: (callback: (body?: string | null, encoding?: string) => void) => void;
 }
 
@@ -175,6 +179,30 @@ export interface RequestScore {
   total: number;
   reasons: ScoreReason[];
   normalized: number;
+}
+
+export type NoiseFilterCategoryKey =
+  | 'media'
+  | 'staticAssets'
+  | 'analyticsTracking'
+  | 'prefetchPreload'
+  | 'healthChecksPings'
+  | 'browserInternals';
+
+export interface NoiseFilterCategorySettings {
+  media: boolean;
+  staticAssets: boolean;
+  analyticsTracking: boolean;
+  prefetchPreload: boolean;
+  healthChecksPings: boolean;
+  browserInternals: boolean;
+}
+
+export interface NoiseFilterSettings {
+  enabled: boolean;
+  categories: NoiseFilterCategorySettings;
+  customUrlPatterns: string[];
+  customDomains: string[];
 }
 
 export interface RecordedRequest {
