@@ -211,6 +211,73 @@ function getPayloadFromRequest(request: RequestLike): GraphQLRequestPayload {
   return combinePayload(bodyPayload, urlPayload);
 }
 
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+function normalizeOperationName(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (trimmed === ':id') {
+    return null;
+  }
+
+  return trimmed;
+}
+
+function looksLikePersistedQueryId(segment: string): boolean {
+  return /^[A-Za-z0-9_-]{12,}$/.test(segment);
+}
+
+function extractOperationNameFromUrl(url: string | null | undefined): string | null {
+  if (typeof url !== 'string' || url.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname
+      .split('/')
+      .filter((segment) => segment.length > 0)
+      .map((segment) => decodePathSegment(segment));
+    const graphqlIndex = segments.findIndex((segment) => segment.toLowerCase() === 'graphql');
+
+    if (graphqlIndex === -1) {
+      return null;
+    }
+
+    const tail = segments.slice(graphqlIndex + 1);
+    if (tail.length === 0) {
+      return null;
+    }
+
+    let candidate: string | null = null;
+
+    if (tail.length >= 2 && looksLikePersistedQueryId(tail[0])) {
+      candidate = tail[1];
+    } else if (!looksLikePersistedQueryId(tail[0])) {
+      candidate = tail[0];
+    } else if (tail.length >= 2) {
+      candidate = tail[1];
+    }
+
+    return normalizeOperationName(candidate);
+  } catch {
+    return null;
+  }
+}
+
 function looksLikeGraphQLQuery(query: string | null): boolean {
   if (!query) {
     return false;
@@ -238,6 +305,19 @@ function hasGraphQLSignal(payload: GraphQLRequestPayload, url: string | null | u
   }
 
   return looksLikeGraphQLQuery(payload.query);
+}
+
+function inferOperationTypeFromMethod(method: string | null | undefined): GraphQLOperationType | 'unknown' {
+  if (typeof method !== 'string') {
+    return 'unknown';
+  }
+
+  const normalizedMethod = method.toUpperCase();
+  if (normalizedMethod === 'GET') {
+    return 'query';
+  }
+
+  return 'unknown';
 }
 
 interface MutableSelectionField {
@@ -433,7 +513,7 @@ export function parseGraphQLOperation(
   }
 
   let operationType: GraphQLOperationType | 'unknown' = 'unknown';
-  let operationName = payload.operationName;
+  let operationName = payload.operationName ?? extractOperationNameFromUrl(request.url);
   let selectionSet: GraphQLSelectionField[] | null = null;
 
   if (payload.query) {
@@ -445,7 +525,11 @@ export function parseGraphQLOperation(
     } catch {
       operationType = inferOperationTypeFromQuery(payload.query);
     }
+  } else {
+    operationType = inferOperationTypeFromMethod(request.method);
   }
+
+  operationName = operationName ?? extractOperationNameFromUrl(request.url);
 
   const variablesSchema = payload.hasVariables ? inferJsonSchema(payload.variablesValue) : null;
   const operationKey = buildOperationKey({
