@@ -5,7 +5,8 @@
   "description": "Chrome DevTools Network Snapshot Extension",
   "permissions": [
     "cookies",
-    "activeTab"
+    "activeTab",
+    "storage"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -2,7 +2,7 @@
   var POLL_INTERVAL_MS = 400;
   var STORAGE_KEY_MEDIA_FILTER = "gladium_hideMediaEndpoints";
 
-  function loadMediaFilterPreference() {
+  function loadMediaFilterPreferenceSync() {
     try {
       var stored = localStorage.getItem(STORAGE_KEY_MEDIA_FILTER);
       if (stored === null) {
@@ -14,11 +14,48 @@
     }
   }
 
-  function saveMediaFilterPreference(value) {
+  function loadMediaFilterPreferenceAsync(callback) {
     try {
-      localStorage.setItem(STORAGE_KEY_MEDIA_FILTER, String(value));
+      if (
+        typeof chrome !== "undefined" &&
+        chrome.storage &&
+        chrome.storage.local
+      ) {
+        chrome.storage.local.get(STORAGE_KEY_MEDIA_FILTER, function (result) {
+          var stored = result[STORAGE_KEY_MEDIA_FILTER];
+          if (stored === undefined) {
+            callback(true);
+          } else {
+            callback(stored !== false && stored !== "false");
+          }
+        });
+        return;
+      }
     } catch (e) {
-      // silently ignore storage errors
+      // fall through
+    }
+    callback(loadMediaFilterPreferenceSync());
+  }
+
+  function saveMediaFilterPreference(value) {
+    var boolValue = !!value;
+    try {
+      localStorage.setItem(STORAGE_KEY_MEDIA_FILTER, String(boolValue));
+    } catch (e) {
+      // silently ignore localStorage errors
+    }
+    try {
+      if (
+        typeof chrome !== "undefined" &&
+        chrome.storage &&
+        chrome.storage.local
+      ) {
+        var data = {};
+        data[STORAGE_KEY_MEDIA_FILTER] = boolValue;
+        chrome.storage.local.set(data);
+      }
+    } catch (e) {
+      // silently ignore chrome.storage errors
     }
   }
 
@@ -43,7 +80,7 @@
     snapshotTime: null,
     selectedEndpointKey: null,
     checkedEndpointKeys: {},
-    hideMediaEndpoints: loadMediaFilterPreference(),
+    hideMediaEndpoints: loadMediaFilterPreferenceSync(),
     liveEntries: [],
     snapshotEntries: [],
     snapshotCookies: [],
@@ -1622,6 +1659,7 @@
     state.snapshotCookieDomain = null;
     state.snapshotCookieError = null;
     state.isCapturingCookies = true;
+    state.lastListSignature = "";
     render();
     captureSnapshotCookies(captureId);
   }
@@ -1677,6 +1715,14 @@
       elements.liveIndicator.textContent =
         "Recorder unavailable in this context.";
     }
+
+    loadMediaFilterPreferenceAsync(function (storedValue) {
+      if (state.hideMediaEndpoints !== storedValue) {
+        state.hideMediaEndpoints = storedValue;
+        state.lastListSignature = "";
+        render();
+      }
+    });
 
     startPolling();
   }
