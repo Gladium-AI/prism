@@ -5,6 +5,7 @@
     snapshotButton: document.getElementById("snapshot-toggle"),
     exportButton: document.getElementById("snapshot-export"),
     mapExportButton: document.getElementById("map-export"),
+    mediaFilterButton: document.getElementById("media-filter"),
     selectAllButton: document.getElementById("select-all"),
     selectNoneButton: document.getElementById("select-none"),
     liveIndicator: document.getElementById("live-indicator"),
@@ -21,6 +22,7 @@
     snapshotTime: null,
     selectedEndpointKey: null,
     checkedEndpointKeys: {},
+    hideMediaEndpoints: true,
     liveEntries: [],
     snapshotEntries: [],
     snapshotCookies: [],
@@ -75,6 +77,77 @@
 
   function getDisplayEntries() {
     return state.isSnapshot ? state.snapshotEntries : state.liveEntries;
+  }
+
+  // ── Media filtering ────────────────────────────────────────
+
+  var MEDIA_CONTENT_TYPE_PREFIXES = ["image/", "video/", "audio/", "font/"];
+
+  var MEDIA_URL_EXTENSIONS = [
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp",
+    ".tiff", ".tif", ".avif", ".heic", ".heif", ".cur",
+    ".mp4", ".webm", ".ogg", ".avi", ".mov", ".mkv",
+    ".mp3", ".wav", ".flac", ".aac", ".m4a",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+  ];
+
+  function isMediaContentType(contentType) {
+    if (typeof contentType !== "string" || contentType.length === 0) {
+      return false;
+    }
+    var lower = contentType.toLowerCase().split(";")[0].trim();
+    for (var i = 0; i < MEDIA_CONTENT_TYPE_PREFIXES.length; i++) {
+      if (lower.indexOf(MEDIA_CONTENT_TYPE_PREFIXES[i]) === 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function getUrlExtension(url) {
+    if (typeof url !== "string") {
+      return "";
+    }
+    try {
+      var pathname = new URL(url).pathname;
+      var lastDot = pathname.lastIndexOf(".");
+      if (lastDot === -1) {
+        return "";
+      }
+      return pathname.substring(lastDot).toLowerCase();
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function isMediaEntry(entry) {
+    var response = entry && entry.response ? entry.response : {};
+    if (isMediaContentType(response.contentType)) {
+      return true;
+    }
+    var request = entry && entry.request ? entry.request : {};
+    var ext = getUrlExtension(request.url);
+    if (ext) {
+      for (var i = 0; i < MEDIA_URL_EXTENSIONS.length; i++) {
+        if (ext === MEDIA_URL_EXTENSIONS[i]) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function filterMediaEntries(entries) {
+    if (!state.hideMediaEndpoints) {
+      return entries;
+    }
+    var filtered = [];
+    for (var i = 0; i < entries.length; i++) {
+      if (!isMediaEntry(entries[i])) {
+        filtered.push(entries[i]);
+      }
+    }
+    return filtered;
   }
 
   function formatSnapshotTime(snapshotTime) {
@@ -421,6 +494,16 @@
 
     if (elements.mapExportButton) {
       elements.mapExportButton.disabled = getCheckedCount() === 0;
+    }
+
+    if (elements.mediaFilterButton) {
+      if (state.hideMediaEndpoints) {
+        elements.mediaFilterButton.textContent = "Hide Media";
+        elements.mediaFilterButton.classList.add("media-filter-active");
+      } else {
+        elements.mediaFilterButton.textContent = "Show Media";
+        elements.mediaFilterButton.classList.remove("media-filter-active");
+      }
     }
 
     if (state.isSnapshot) {
@@ -1342,7 +1425,7 @@
   }
 
   function buildMapExportPayload() {
-    var entries = getDisplayEntries();
+    var entries = filterMediaEntries(getDisplayEntries());
     var groups = sortGroups(getEndpointGroups(entries));
     var endpoints = [];
 
@@ -1459,7 +1542,7 @@
   // ── Main render ──────────────────────────────────────────
 
   function render() {
-    var entries = getDisplayEntries();
+    var entries = filterMediaEntries(getDisplayEntries());
     var groups = sortGroups(getEndpointGroups(entries));
     syncCheckedKeys(groups);
     ensureValidSelection(groups);
@@ -1483,8 +1566,9 @@
       return;
     }
 
-    var groups = getEndpointGroups(state.liveEntries);
-    var signature = getListSignature(groups, state.liveEntries.length);
+    var filtered = filterMediaEntries(state.liveEntries);
+    var groups = getEndpointGroups(filtered);
+    var signature = getListSignature(groups, filtered.length);
     if (signature === state.lastListSignature) {
       return;
     }
@@ -1543,6 +1627,14 @@
 
     if (elements.mapExportButton) {
       elements.mapExportButton.addEventListener("click", onMapExportClick);
+    }
+
+    if (elements.mediaFilterButton) {
+      elements.mediaFilterButton.addEventListener("click", function () {
+        state.hideMediaEndpoints = !state.hideMediaEndpoints;
+        state.lastListSignature = "";
+        render();
+      });
     }
 
     if (elements.selectAllButton) {

@@ -229,6 +229,12 @@ body {
   color: var(--accent);
 }
 
+.media-filter-active {
+  background: #e8f0fc;
+  color: var(--accent);
+  border-color: #a0bfe0;
+}
+
 /* ── Endpoint list ──────────────────────────────────────── */
 
 .endpoint-list {
