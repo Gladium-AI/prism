@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./docs/images/prism-logo-header.png" alt="Prism logo" width="360" />
+  <img src="./docs/images/readme-banner.jpeg" alt="Prism banner" width="960" />
 </p>
 
 # Prism
