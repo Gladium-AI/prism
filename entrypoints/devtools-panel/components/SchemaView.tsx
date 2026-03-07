@@ -129,6 +129,38 @@ export function BodySchemaView({ bodySchema }: { bodySchema: BodySchema | null |
   );
 }
 
+function getCollapsedValue(value: string, maxLength = 110): string {
+  const singleLine = value.replace(/\s+/g, ' ').trim();
+  if (singleLine.length <= maxLength) {
+    return singleLine;
+  }
+  return `${singleLine.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+const COLLAPSIBLE_VALUE_THRESHOLD = 120;
+
+function HeaderValueItem({ value }: { value: string }) {
+  const normalizedValue = value.length > 0 ? value : '(empty)';
+  const singleLineValue = normalizedValue.replace(/\s+/g, ' ').trim();
+  const collapsedValue = getCollapsedValue(normalizedValue);
+  const shouldCollapse = singleLineValue.length > COLLAPSIBLE_VALUE_THRESHOLD;
+
+  if (!shouldCollapse) {
+    return (
+      <div className="header-value-plain" title={normalizedValue}>
+        {normalizedValue}
+      </div>
+    );
+  }
+
+  return (
+    <details className="header-value-collapsible">
+      <summary title={normalizedValue}>{collapsedValue}</summary>
+      <pre className="header-value-expanded">{normalizedValue}</pre>
+    </details>
+  );
+}
+
 function HeaderRow({ field, values }: { field: HeaderField; values: string[] }) {
   const displayValues = values.length > 0 ? values : [''];
 
@@ -141,13 +173,7 @@ function HeaderRow({ field, values }: { field: HeaderField; values: string[] }) 
       <td className="header-value">
         <div className="header-values">
           {displayValues.map((value, index) => (
-            <div
-              className="header-value-item"
-              key={`${field.name}-value-${index}`}
-              title={value.length > 0 ? value : '(empty)'}
-            >
-              {value.length > 0 ? value : '(empty)'}
-            </div>
+            <HeaderValueItem key={`${field.name}-value-${index}`} value={value} />
           ))}
         </div>
       </td>
