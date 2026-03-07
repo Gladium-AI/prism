@@ -29,6 +29,7 @@
     isCapturingCookies: false,
     snapshotCaptureId: 0,
     lastListSignature: "",
+    collapsedSections: {},
   };
 
   // ── Utility ──────────────────────────────────────────────
@@ -75,6 +76,66 @@
 
   function getDisplayEntries() {
     return state.isSnapshot ? state.snapshotEntries : state.liveEntries;
+  }
+
+  // ── GraphQL detection ──────────────────────────────────
+
+  function isGraphQLEntry(entry) {
+    var request = entry && entry.request ? entry.request : {};
+    var url = typeof request.url === "string" ? request.url : "";
+
+    // URL contains /graphql
+    try {
+      var pathname = new URL(url).pathname.toLowerCase();
+      if (pathname.indexOf("/graphql") !== -1) {
+        return true;
+      }
+    } catch (e) {
+      if (url.toLowerCase().indexOf("/graphql") !== -1) {
+        return true;
+      }
+    }
+
+    // Request body has query or mutation field
+    var body = typeof request.body === "string" ? request.body : "";
+    if (body.length > 0) {
+      try {
+        var parsed = JSON.parse(body);
+        if (parsed && (typeof parsed.query === "string" || typeof parsed.mutation === "string")) {
+          return true;
+        }
+      } catch (e) {
+        // not JSON, skip
+      }
+    }
+
+    return false;
+  }
+
+  function isGraphQLGroup(group) {
+    if (!group || !Array.isArray(group.entries) || group.entries.length === 0) {
+      return false;
+    }
+    // A group is GraphQL if any of its entries are GraphQL
+    for (var i = 0; i < group.entries.length; i++) {
+      if (isGraphQLEntry(group.entries[i])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function classifyGroups(groups) {
+    var graphql = [];
+    var rest = [];
+    for (var i = 0; i < groups.length; i++) {
+      if (isGraphQLGroup(groups[i])) {
+        graphql.push(groups[i]);
+      } else {
+        rest.push(groups[i]);
+      }
+    }
+    return { graphql: graphql, rest: rest };
   }
 
   function formatSnapshotTime(snapshotTime) {
@@ -439,6 +500,106 @@
 
   // ── Render: Endpoint List ────────────────────────────────
 
+  function renderEndpointRow(group, fragment) {
+    var method = group.method || "GET";
+    var path = getCompactPath(group.normalizedUrl);
+    var obsCount = group.entries.length;
+    var isSelected = state.selectedEndpointKey === group.endpointKey;
+    var isChecked = state.checkedEndpointKeys[group.endpointKey] === true;
+
+    var row = document.createElement("div");
+    row.className = "endpoint-row" + (isSelected ? " active" : "");
+    row.setAttribute("role", "option");
+    row.dataset.endpointKey = group.endpointKey;
+    row.setAttribute("aria-selected", isSelected ? "true" : "false");
+
+    var mergedSchema = getMergedEndpointSchema(group);
+    var hasAuth = false;
+    if (
+      mergedSchema &&
+      mergedSchema.request &&
+      mergedSchema.request.headers
+    ) {
+      var reqFields = mergedSchema.request.headers.fields || [];
+      for (var j = 0; j < reqFields.length; j++) {
+        if (reqFields[j].isAuth) {
+          hasAuth = true;
+          break;
+        }
+      }
+    }
+
+    var authIcon = hasAuth
+      ? ' <span class="auth-indicator" title="Uses authentication">\uD83D\uDD11</span>'
+      : "";
+
+    row.innerHTML = [
+      '<div class="row-top">',
+      '  <input type="checkbox" class="endpoint-checkbox"' +
+        (isChecked ? " checked" : "") +
+        ' title="Include in export" />',
+      '  <span class="method-chip ' +
+        getMethodClass(method) +
+        '">' +
+        escapeHtml(method) +
+        "</span>",
+      '  <span class="endpoint-path" title="' +
+        escapeHtml(group.endpointKey) +
+        '">' +
+        escapeHtml(path) +
+        authIcon +
+        "</span>",
+      '  <span class="obs-chip">' + obsCount + "</span>",
+      "</div>",
+    ].join("\n");
+
+    (function (key) {
+      var checkbox = row.querySelector(".endpoint-checkbox");
+      checkbox.addEventListener("click", function (e) {
+        e.stopPropagation();
+        state.checkedEndpointKeys[key] = checkbox.checked;
+        render();
+      });
+      row.addEventListener("click", function (e) {
+        if (e.target === checkbox) {
+          return;
+        }
+        state.selectedEndpointKey = key;
+        render();
+      });
+    })(group.endpointKey);
+
+    fragment.appendChild(row);
+  }
+
+  function renderGroupSection(sectionKey, label, groups, fragment) {
+    if (groups.length === 0) {
+      return;
+    }
+
+    var isCollapsed = state.collapsedSections[sectionKey] === true;
+
+    var header = document.createElement("div");
+    header.className = "group-header";
+    header.innerHTML =
+      '<span class="group-toggle">' + (isCollapsed ? "\u25B6" : "\u25BC") + "</span>" +
+      '<span class="group-label">' + escapeHtml(label) + "</span>" +
+      '<span class="group-count">' + groups.length + "</span>";
+
+    header.addEventListener("click", function () {
+      state.collapsedSections[sectionKey] = !state.collapsedSections[sectionKey];
+      render();
+    });
+
+    fragment.appendChild(header);
+
+    if (!isCollapsed) {
+      for (var i = 0; i < groups.length; i++) {
+        renderEndpointRow(groups[i], fragment);
+      }
+    }
+  }
+
   function renderEndpointList(groups) {
     elements.endpointList.innerHTML = "";
 
@@ -448,79 +609,18 @@
       return;
     }
 
+    var classified = classifyGroups(groups);
     var fragment = document.createDocumentFragment();
 
-    for (var i = 0; i < groups.length; i++) {
-      var group = groups[i];
-      var method = group.method || "GET";
-      var path = getCompactPath(group.normalizedUrl);
-      var obsCount = group.entries.length;
-      var isSelected = state.selectedEndpointKey === group.endpointKey;
-      var isChecked = state.checkedEndpointKeys[group.endpointKey] === true;
-
-      var row = document.createElement("div");
-      row.className = "endpoint-row" + (isSelected ? " active" : "");
-      row.setAttribute("role", "option");
-      row.dataset.endpointKey = group.endpointKey;
-      row.setAttribute("aria-selected", isSelected ? "true" : "false");
-
-      var mergedSchema = getMergedEndpointSchema(group);
-      var hasAuth = false;
-      if (
-        mergedSchema &&
-        mergedSchema.request &&
-        mergedSchema.request.headers
-      ) {
-        var reqFields = mergedSchema.request.headers.fields || [];
-        for (var j = 0; j < reqFields.length; j++) {
-          if (reqFields[j].isAuth) {
-            hasAuth = true;
-            break;
-          }
-        }
+    // Only show section headers if there are GraphQL endpoints
+    if (classified.graphql.length > 0) {
+      renderGroupSection("graphql", "GraphQL", classified.graphql, fragment);
+      renderGroupSection("rest", "REST", classified.rest, fragment);
+    } else {
+      // All REST, render flat (no headers needed)
+      for (var i = 0; i < groups.length; i++) {
+        renderEndpointRow(groups[i], fragment);
       }
-
-      var authIcon = hasAuth
-        ? ' <span class="auth-indicator" title="Uses authentication">\uD83D\uDD11</span>'
-        : "";
-
-      row.innerHTML = [
-        '<div class="row-top">',
-        '  <input type="checkbox" class="endpoint-checkbox"' +
-          (isChecked ? " checked" : "") +
-          ' title="Include in export" />',
-        '  <span class="method-chip ' +
-          getMethodClass(method) +
-          '">' +
-          escapeHtml(method) +
-          "</span>",
-        '  <span class="endpoint-path" title="' +
-          escapeHtml(group.endpointKey) +
-          '">' +
-          escapeHtml(path) +
-          authIcon +
-          "</span>",
-        '  <span class="obs-chip">' + obsCount + "</span>",
-        "</div>",
-      ].join("\n");
-
-      (function (key) {
-        var checkbox = row.querySelector(".endpoint-checkbox");
-        checkbox.addEventListener("click", function (e) {
-          e.stopPropagation();
-          state.checkedEndpointKeys[key] = checkbox.checked;
-          render();
-        });
-        row.addEventListener("click", function (e) {
-          if (e.target === checkbox) {
-            return;
-          }
-          state.selectedEndpointKey = key;
-          render();
-        });
-      })(group.endpointKey);
-
-      fragment.appendChild(row);
     }
 
     elements.endpointList.appendChild(fragment);
@@ -565,6 +665,13 @@
         obsCount +
         " observation" +
         (obsCount !== 1 ? "s" : "") +
+        "</span>"
+    );
+    var apiTypeLabel = isGraphQLGroup(group) ? "GraphQL" : "REST";
+    var apiTypeClass = isGraphQLGroup(group) ? "meta-chip-graphql" : "meta-chip-rest";
+    sections.push(
+      '    <span class="meta-chip ' + apiTypeClass + '">' +
+        escapeHtml(apiTypeLabel) +
         "</span>"
     );
     sections.push("  </div>");
@@ -1206,6 +1313,7 @@
         endpointKey: group.endpointKey,
         normalizedUrl: group.normalizedUrl,
         method: group.method,
+        apiType: isGraphQLGroup(group) ? "graphql" : "rest",
         observationCount: group.entries.length,
         maxScore: maxScore,
         mergedSchema: getMergedEndpointSchema(group),
@@ -1358,6 +1466,7 @@
       var endpoint = {
         method: method,
         url: url,
+        apiType: isGraphQLGroup(group) ? "graphql" : "rest",
         observations: group.entries.length,
       };
 
