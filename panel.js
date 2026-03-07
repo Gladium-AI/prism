@@ -1,22 +1,22 @@
 (function initPanel(globalScope) {
-  const POLL_INTERVAL_MS = 400;
+  var POLL_INTERVAL_MS = 400;
 
-  const elements = {
+  var elements = {
     snapshotButton: document.getElementById("snapshot-toggle"),
     exportButton: document.getElementById("snapshot-export"),
     liveIndicator: document.getElementById("live-indicator"),
     requestCount: document.getElementById("request-count"),
     endpointCount: document.getElementById("endpoint-count"),
-    requestList: document.getElementById("request-list"),
-    requestDetails: document.getElementById("request-details"),
+    endpointList: document.getElementById("endpoint-list"),
+    endpointDetails: document.getElementById("endpoint-details"),
     cookieCount: document.getElementById("cookie-count"),
     cookieList: document.getElementById("cookie-list"),
   };
 
-  const state = {
+  var state = {
     isSnapshot: false,
     snapshotTime: null,
-    selectedId: null,
+    selectedEndpointKey: null,
     liveEntries: [],
     snapshotEntries: [],
     snapshotCookies: [],
@@ -26,6 +26,8 @@
     snapshotCaptureId: 0,
     lastListSignature: "",
   };
+
+  // ── Utility ──────────────────────────────────────────────
 
   function escapeHtml(value) {
     return String(value)
@@ -42,550 +44,562 @@
       : 0;
   }
 
-  function getStatus(entry) {
-    return entry && entry.response && typeof entry.response.status === "number"
-      ? entry.response.status
-      : null;
-  }
-
-  function getMethod(entry) {
-    if (!entry || !entry.request || typeof entry.request.method !== "string") {
-      return "-";
-    }
-
-    return entry.request.method.toUpperCase();
-  }
-
-  function getContentType(entry) {
-    const type =
-      entry && entry.response && typeof entry.response.contentType === "string"
-        ? entry.response.contentType
-        : "";
-
-    if (!type) {
-      return "unknown";
-    }
-
-    return type;
-  }
-
   function sortByScore(entries) {
-    return entries.slice().sort((left, right) => {
-      const scoreDifference = getScore(right) - getScore(left);
+    return entries.slice().sort(function (left, right) {
+      var scoreDifference = getScore(right) - getScore(left);
       if (scoreDifference !== 0) {
         return scoreDifference;
       }
-
       return (right.id || 0) - (left.id || 0);
     });
   }
 
-  function getListSignature(entries) {
-    if (!entries.length) {
-      return "empty";
+  function getMethodClass(method) {
+    if (method === "GET") {
+      return "method-get";
     }
-
-    const top = entries[0];
-    const last = entries[entries.length - 1];
-    return `${entries.length}:${top.id}:${last.id}:${getScore(top)}`;
+    if (
+      method === "POST" ||
+      method === "PUT" ||
+      method === "PATCH" ||
+      method === "DELETE"
+    ) {
+      return "method-write";
+    }
+    return "method-other";
   }
 
   function getDisplayEntries() {
     return state.isSnapshot ? state.snapshotEntries : state.liveEntries;
   }
 
-  function ensureValidSelection(entries) {
-    if (!entries.length) {
-      state.selectedId = null;
-      return;
+  function formatSnapshotTime(snapshotTime) {
+    if (!(snapshotTime instanceof Date)) {
+      return "";
     }
-
-    const selectionExists = entries.some((entry) => entry.id === state.selectedId);
-    if (!selectionExists) {
-      state.selectedId = entries[0].id;
-    }
+    return snapshotTime.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
   }
 
-  function formatForList(url) {
-    if (typeof url !== "string" || url.length === 0) {
-      return "(no URL)";
-    }
+  // ── Endpoint grouping ────────────────────────────────────
 
-    try {
-      const parsed = new URL(url);
-      const query = parsed.search.length > 48
-        ? `${parsed.search.slice(0, 48)}...`
-        : parsed.search;
-
-      return `${parsed.host}${parsed.pathname}${query}`;
-    } catch {
-      if (url.length > 96) {
-        return `${url.slice(0, 96)}...`;
-      }
-      return url;
-    }
-  }
-
-  function formatAsPrettyJson(value) {
-    if (typeof value !== "string" || value.trim().length === 0) {
-      return "(empty)";
-    }
-
-    try {
-      const parsed = JSON.parse(value);
-      return JSON.stringify(parsed, null, 2);
-    } catch {
-      return value;
-    }
-  }
-
-  function formatHeaders(headers) {
-    if (!Array.isArray(headers) || headers.length === 0) {
-      return "(none)";
-    }
-
-    return headers
-      .map((header) => {
-        const name = header && typeof header.name === "string" ? header.name : "(unknown)";
-        const value = header && header.value !== undefined ? String(header.value) : "";
-        return `${name}: ${value}`;
-      })
-      .join("\n");
-  }
-
-  function normalizeHeaders(headers) {
-    if (!Array.isArray(headers)) {
-      return [];
-    }
-
-    return headers
-      .map((header) => {
-        if (!header || typeof header.name !== "string") {
-          return null;
-        }
-
-        return {
-          name: header.name,
-          value: header.value !== undefined ? String(header.value) : "",
-        };
-      })
-      .filter(Boolean);
-  }
-
-  function serializeScore(score) {
-    return {
-      total: score && typeof score.total === "number" ? score.total : 0,
-      normalized: score && typeof score.normalized === "number" ? score.normalized : null,
-      reasons: score && Array.isArray(score.reasons) ? score.reasons : [],
-    };
-  }
-
-  function getEndpointKey(entry) {
-    const normalizer = globalScope.GladiumUrlNormalizer;
-    if (!normalizer || typeof normalizer.endpointKey !== "function") {
-      return null;
-    }
-
-    const request = entry && entry.request ? entry.request : {};
-    return normalizer.endpointKey(request.method, request.url);
-  }
-
-  function getEntrySchema(entry) {
-    const inferrer = globalScope.GladiumSchemaInferrer;
-    if (!inferrer || typeof inferrer.inferSchema !== "function") {
-      return null;
-    }
-
-    return inferrer.inferSchema(entry);
-  }
-
-  function serializeRequestForExport(entry) {
-    const request = entry && entry.request ? entry.request : {};
-    const response = entry && entry.response ? entry.response : {};
-    const timing = entry && entry.timing ? entry.timing : {};
-
-    return {
-      id: entry && typeof entry.id === "number" ? entry.id : null,
-      capturedAt: entry && typeof entry.capturedAt === "string" ? entry.capturedAt : null,
-      endpointKey: getEndpointKey(entry),
-      schema: getEntrySchema(entry),
-      score: serializeScore(entry ? entry.score : null),
-      request: {
-        url: typeof request.url === "string" ? request.url : null,
-        method: typeof request.method === "string" ? request.method.toUpperCase() : null,
-        headers: normalizeHeaders(request.headers),
-        body: typeof request.body === "string" ? request.body : null,
-      },
-      response: {
-        status: typeof response.status === "number" ? response.status : null,
-        statusText: typeof response.statusText === "string" ? response.statusText : null,
-        headers: normalizeHeaders(response.headers),
-        body: typeof response.body === "string" ? response.body : null,
-        contentType: typeof response.contentType === "string" ? response.contentType : null,
-        encoding: typeof response.encoding === "string" ? response.encoding : null,
-        bodyCaptureError: typeof response.bodyCaptureError === "string"
-          ? response.bodyCaptureError
-          : null,
-      },
-      timing: {
-        startedDateTime: typeof timing.startedDateTime === "string" ? timing.startedDateTime : null,
-        durationMs: typeof timing.durationMs === "number" ? timing.durationMs : null,
-      },
-    };
-  }
-
-  function serializeCookieForExport(cookie) {
-    const result = {
-      name: cookie && typeof cookie.name === "string" ? cookie.name : "",
-      value: cookie && typeof cookie.value === "string" ? cookie.value : "",
-      domain: cookie && typeof cookie.domain === "string" ? cookie.domain : "",
-      path: cookie && typeof cookie.path === "string" ? cookie.path : "",
-      secure: Boolean(cookie && cookie.secure),
-      httpOnly: Boolean(cookie && cookie.httpOnly),
-      sameSite: cookie && typeof cookie.sameSite === "string" ? cookie.sameSite : "unspecified",
-      session: Boolean(cookie && cookie.session),
-      hostOnly: Boolean(cookie && cookie.hostOnly),
-      storeId: cookie && typeof cookie.storeId === "string" ? cookie.storeId : "",
-      expirationDate:
-        cookie && typeof cookie.expirationDate === "number" ? cookie.expirationDate : null,
-      partitionKey: cookie && cookie.partitionKey ? cookie.partitionKey : null,
-    };
-
-    if (typeof result.expirationDate === "number") {
-      result.expiresAt = new Date(result.expirationDate * 1000).toISOString();
-    } else {
-      result.expiresAt = null;
-    }
-
-    return result;
-  }
-
-  function getSnapshotTimestamp(snapshotTime) {
-    return snapshotTime instanceof Date ? snapshotTime.toISOString() : null;
-  }
-
-  function formatNumberForFilename(value) {
-    return String(value).padStart(2, "0");
-  }
-
-  function buildSnapshotFilename(snapshotTime) {
-    const date = snapshotTime instanceof Date ? snapshotTime : new Date();
-    const yyyy = date.getFullYear();
-    const mm = formatNumberForFilename(date.getMonth() + 1);
-    const dd = formatNumberForFilename(date.getDate());
-    const hh = formatNumberForFilename(date.getHours());
-    const min = formatNumberForFilename(date.getMinutes());
-    const ss = formatNumberForFilename(date.getSeconds());
-
-    return `gladium-snapshot-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
-  }
-
-  function getMergedEndpointSchema(group) {
-    const merger = globalScope.GladiumSchemaMerger;
-    if (!merger || typeof merger.mergeEndpointGroup !== "function") {
-      return null;
-    }
-
-    const result = merger.mergeEndpointGroup(group);
-    return result ? result.schema : null;
-  }
-
-  function buildEndpointsSummary(entries) {
-    const normalizer = globalScope.GladiumUrlNormalizer;
+  function getEndpointGroups(entries) {
+    var normalizer = globalScope.GladiumUrlNormalizer;
     if (!normalizer || typeof normalizer.deduplicateEntries !== "function") {
       return [];
     }
+    return normalizer.deduplicateEntries(entries);
+  }
 
-    const groups = normalizer.deduplicateEntries(entries);
-    return groups.map(function (group) {
-      const scores = group.entries.map(getScore);
-      const maxScore = Math.max.apply(null, scores.length ? scores : [0]);
-
-      return {
-        endpointKey: group.endpointKey,
-        normalizedUrl: group.normalizedUrl,
-        method: group.method,
-        observationCount: group.entries.length,
-        maxScore: maxScore,
-        mergedSchema: getMergedEndpointSchema(group),
-        requestIds: group.entries.map(function (entry) {
-          return entry && typeof entry.id === "number" ? entry.id : null;
-        }),
-      };
+  function sortGroups(groups) {
+    return groups.slice().sort(function (a, b) {
+      var aMax = 0;
+      var bMax = 0;
+      for (var i = 0; i < a.entries.length; i++) {
+        var s = getScore(a.entries[i]);
+        if (s > aMax) { aMax = s; }
+      }
+      for (var j = 0; j < b.entries.length; j++) {
+        var t = getScore(b.entries[j]);
+        if (t > bMax) { bMax = t; }
+      }
+      if (bMax !== aMax) { return bMax - aMax; }
+      if (b.entries.length !== a.entries.length) {
+        return b.entries.length - a.entries.length;
+      }
+      return 0;
     });
   }
 
-  function buildSnapshotExportPayload() {
-    const endpoints = buildEndpointsSummary(state.snapshotEntries);
-
-    return {
-      format: "gladium-snapshot-v1",
-      exportedAt: new Date().toISOString(),
-      snapshot: {
-        capturedAt: getSnapshotTimestamp(state.snapshotTime),
-        requestCount: state.snapshotEntries.length,
-        endpointCount: endpoints.length,
-        cookieCount: state.snapshotCookies.length,
-        cookieDomain: state.snapshotCookieDomain,
-        cookieCaptureError: state.snapshotCookieError,
-      },
-      endpoints: endpoints,
-      requests: state.snapshotEntries.map(serializeRequestForExport),
-      cookies: state.snapshotCookies.map(serializeCookieForExport),
-    };
-  }
-
-  function downloadTextFile(fileName, content) {
-    const blob = new Blob([content], {
-      type: "application/json;charset=utf-8",
-    });
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-
-    link.href = objectUrl;
-    link.download = fileName;
-    link.style.display = "none";
-
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-    globalScope.setTimeout(() => {
-      URL.revokeObjectURL(objectUrl);
-    }, 0);
-  }
-
-  function getHostnameFromUrl(url) {
-    if (typeof url !== "string" || url.length === 0) {
+  function getMergedEndpointSchema(group) {
+    var merger = globalScope.GladiumSchemaMerger;
+    if (!merger || typeof merger.mergeEndpointGroup !== "function") {
       return null;
     }
+    var result = merger.mergeEndpointGroup(group);
+    return result ? result.schema : null;
+  }
 
+  function getCompactPath(normalizedUrl) {
+    if (typeof normalizedUrl !== "string") {
+      return "(unknown)";
+    }
     try {
-      return new URL(url).hostname || null;
-    } catch {
-      return null;
+      var parsed = new URL(normalizedUrl);
+      return parsed.pathname + parsed.search;
+    } catch (e) {
+      return normalizedUrl;
     }
   }
 
-  function getHttpUrl(url) {
-    if (typeof url !== "string" || url.length === 0) {
-      return null;
+  // ── Schema rendering ─────────────────────────────────────
+
+  function renderSchemaType(schema) {
+    if (!schema) {
+      return escapeHtml("unknown");
     }
 
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        return null;
+    if (schema.type === "mixed" && Array.isArray(schema.variants)) {
+      var parts = [];
+      for (var i = 0; i < schema.variants.length; i++) {
+        parts.push(escapeHtml(schema.variants[i]));
+      }
+      return parts.join('<span class="schema-punct"> | </span>');
+    }
+
+    if (schema.type === "array") {
+      if (schema.items) {
+        return (
+          escapeHtml("array") +
+          '<span class="schema-punct">&lt;</span>' +
+          renderSchemaType(schema.items) +
+          '<span class="schema-punct">&gt;</span>'
+        );
+      }
+      return escapeHtml("array");
+    }
+
+    return '<span class="schema-type-name">' + escapeHtml(schema.type) + "</span>";
+  }
+
+  function renderSchemaFields(schema, depth) {
+    if (!schema || schema.type !== "object" || !schema.fields) {
+      return "";
+    }
+
+    if (depth > 4) {
+      return '<div class="schema-field schema-depth-limit">...</div>';
+    }
+
+    var keys = Object.keys(schema.fields);
+    if (keys.length === 0) {
+      return '<div class="schema-field schema-empty">(empty object)</div>';
+    }
+
+    var html = [];
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      var field = schema.fields[key];
+      var isOptional = field && field.optional;
+
+      var line = '<div class="schema-field">';
+      line += '<span class="schema-key">' + escapeHtml(key) + "</span>";
+      line += '<span class="schema-punct">: </span>';
+      line += '<span class="schema-type">' + renderSchemaType(field) + "</span>";
+      if (isOptional) {
+        line += ' <span class="schema-optional">optional</span>';
+      }
+      line += "</div>";
+      html.push(line);
+
+      if (field && field.type === "object" && field.fields) {
+        html.push(
+          '<div class="schema-indent">' +
+            renderSchemaFields(field, depth + 1) +
+            "</div>"
+        );
       }
 
-      return parsed.toString();
-    } catch {
-      return null;
-    }
-  }
-
-  function getUrlFromEntries(entries) {
-    for (const entry of entries) {
-      const candidate = getHttpUrl(entry && entry.request ? entry.request.url : null);
-      if (candidate) {
-        return candidate;
-      }
-    }
-    return null;
-  }
-
-  function getDomainFromEntries(entries) {
-    for (const entry of entries) {
-      const domain = getHostnameFromUrl(entry && entry.request ? entry.request.url : null);
-      if (domain) {
-        return domain;
-      }
-    }
-    return null;
-  }
-
-  function evaluateInInspectedWindow(expression) {
-    return new Promise((resolve) => {
       if (
-        typeof chrome === "undefined" ||
-        !chrome.devtools ||
-        !chrome.devtools.inspectedWindow ||
-        typeof chrome.devtools.inspectedWindow.eval !== "function"
+        field &&
+        field.type === "array" &&
+        field.items &&
+        field.items.type === "object" &&
+        field.items.fields
       ) {
-        resolve({ value: null, error: "inspectedWindow API unavailable" });
-        return;
+        html.push(
+          '<div class="schema-indent">' +
+            renderSchemaFields(field.items, depth + 1) +
+            "</div>"
+        );
       }
-
-      try {
-        chrome.devtools.inspectedWindow.eval(expression, (value, exceptionInfo) => {
-          if (exceptionInfo && exceptionInfo.isException) {
-            resolve({
-              value: null,
-              error: exceptionInfo.value || "inspectedWindow eval failed",
-            });
-            return;
-          }
-
-          const runtimeError = chrome.runtime && chrome.runtime.lastError
-            ? chrome.runtime.lastError.message
-            : null;
-          resolve({
-            value: runtimeError ? null : value,
-            error: runtimeError,
-          });
-        });
-      } catch (error) {
-        resolve({
-          value: null,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    });
-  }
-
-  async function getActiveTabCookieScope() {
-    const evalResult = await evaluateInInspectedWindow("window.location.href");
-    const inspectedUrl = getHttpUrl(evalResult.value);
-    if (inspectedUrl) {
-      return {
-        domain: getHostnameFromUrl(inspectedUrl),
-        url: inspectedUrl,
-      };
     }
 
-    const fallbackUrl = getUrlFromEntries(state.liveEntries);
-    return {
-      domain: fallbackUrl ? getHostnameFromUrl(fallbackUrl) : getDomainFromEntries(state.liveEntries),
-      url: fallbackUrl,
-    };
+    return html.join("\n");
   }
 
-  function getCookiesByFilter(filter) {
-    return new Promise((resolve) => {
+  function renderBodySchema(bodySchema) {
+    if (!bodySchema) {
+      return '<div class="schema-note">No body detected</div>';
+    }
+
+    var contentLabel = bodySchema.contentType || "unknown";
+    var html =
+      '<div class="schema-content-type">' + escapeHtml(contentLabel) + "</div>";
+
+    if (!bodySchema.schema) {
+      if (bodySchema.parseError) {
+        html +=
+          '<div class="schema-error">Parse error: ' +
+          escapeHtml(bodySchema.parseError) +
+          "</div>";
+      } else if (bodySchema.contentType === "opaque") {
+        html += '<div class="schema-note">Non-structured body</div>';
+      }
+      return html;
+    }
+
+    var schema = bodySchema.schema;
+
+    if (schema.type === "object" && schema.fields) {
+      html +=
+        '<div class="schema-tree">' + renderSchemaFields(schema, 0) + "</div>";
+    } else if (schema.type === "array") {
+      html += '<div class="schema-tree">';
+      html +=
+        '<div class="schema-field"><span class="schema-type">' +
+        renderSchemaType(schema) +
+        "</span></div>";
       if (
-        typeof chrome === "undefined" ||
-        !chrome.cookies ||
-        typeof chrome.cookies.getAll !== "function"
+        schema.items &&
+        schema.items.type === "object" &&
+        schema.items.fields
       ) {
-        resolve({ cookies: [], error: "cookies API unavailable" });
-        return;
+        html +=
+          '<div class="schema-indent">' +
+          renderSchemaFields(schema.items, 1) +
+          "</div>";
       }
+      html += "</div>";
+    } else {
+      html +=
+        '<div class="schema-tree"><div class="schema-field"><span class="schema-type">' +
+        renderSchemaType(schema) +
+        "</span></div></div>";
+    }
 
-      try {
-        chrome.cookies.getAll(filter, (cookies) => {
-          const runtimeError = chrome.runtime && chrome.runtime.lastError
-            ? chrome.runtime.lastError.message
-            : null;
-          if (runtimeError) {
-            resolve({ cookies: [], error: runtimeError });
-            return;
+    return html;
+  }
+
+  function renderHeadersSchema(headersSchema, showAuthOnly) {
+    if (
+      !headersSchema ||
+      !Array.isArray(headersSchema.fields) ||
+      headersSchema.fields.length === 0
+    ) {
+      return showAuthOnly ? "" : '<div class="schema-note">No headers</div>';
+    }
+
+    var fields = headersSchema.fields;
+
+    if (showAuthOnly) {
+      var authFields = [];
+      for (var f = 0; f < fields.length; f++) {
+        if (fields[f].isAuth) {
+          authFields.push(fields[f]);
+        }
+      }
+      fields = authFields;
+      if (fields.length === 0) {
+        return "";
+      }
+    }
+
+    var html = ['<table class="headers-table">'];
+    html.push("<thead><tr><th>Header</th><th>Type</th><th></th></tr></thead>");
+    html.push("<tbody>");
+
+    for (var i = 0; i < fields.length; i++) {
+      var field = fields[i];
+      var rowClass = field.isAuth ? "auth-row" : "";
+
+      html.push('<tr class="' + rowClass + '">');
+      html.push('<td class="header-name">' + escapeHtml(field.name));
+      if (field.isAuth) {
+        html.push(' <span class="auth-badge">AUTH</span>');
+      }
+      html.push("</td>");
+      html.push(
+        '<td class="header-type">' +
+          escapeHtml(field.valueType || "unknown") +
+          "</td>"
+      );
+      html.push('<td class="header-meta">');
+      if (field.optional) {
+        html.push('<span class="schema-optional">optional</span>');
+      }
+      if (typeof field.seenCount === "number") {
+        html.push(
+          ' <span class="seen-count">' + field.seenCount + "&times;</span>"
+        );
+      }
+      html.push("</td>");
+      html.push("</tr>");
+    }
+
+    html.push("</tbody></table>");
+    return html.join("\n");
+  }
+
+  // ── Selection ────────────────────────────────────────────
+
+  function ensureValidSelection(groups) {
+    if (!groups.length) {
+      state.selectedEndpointKey = null;
+      return;
+    }
+
+    var exists = false;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].endpointKey === state.selectedEndpointKey) {
+        exists = true;
+        break;
+      }
+    }
+
+    if (!exists) {
+      state.selectedEndpointKey = groups[0].endpointKey;
+    }
+  }
+
+  function getListSignature(groups, totalEntries) {
+    if (!groups.length) {
+      return "empty";
+    }
+    return groups.length + ":" + totalEntries + ":" + groups[0].endpointKey;
+  }
+
+  // ── Render: Toolbar ──────────────────────────────────────
+
+  function renderToolbar(entries, groups) {
+    elements.requestCount.textContent = entries.length + " obs";
+
+    if (elements.endpointCount) {
+      elements.endpointCount.textContent = String(groups.length);
+    }
+
+    if (elements.exportButton) {
+      elements.exportButton.disabled =
+        !state.isSnapshot || state.isCapturingCookies;
+    }
+
+    if (state.isSnapshot) {
+      var snapshotTime = formatSnapshotTime(state.snapshotTime);
+      var snapshotSuffix = snapshotTime ? " at " + snapshotTime : "";
+      elements.snapshotButton.textContent = "Resume Live";
+      elements.snapshotButton.classList.add("snapshot-active");
+      elements.liveIndicator.textContent = "Snapshot frozen" + snapshotSuffix;
+      return;
+    }
+
+    elements.snapshotButton.textContent = "Take Snapshot";
+    elements.snapshotButton.classList.remove("snapshot-active");
+    elements.liveIndicator.textContent = "Live updates enabled";
+  }
+
+  // ── Render: Endpoint List ────────────────────────────────
+
+  function renderEndpointList(groups) {
+    elements.endpointList.innerHTML = "";
+
+    if (!groups.length) {
+      elements.endpointList.innerHTML =
+        '<div class="empty-state">No endpoints discovered yet. Trigger network activity to populate the map.</div>';
+      return;
+    }
+
+    var fragment = document.createDocumentFragment();
+
+    for (var i = 0; i < groups.length; i++) {
+      var group = groups[i];
+      var method = group.method || "GET";
+      var path = getCompactPath(group.normalizedUrl);
+      var obsCount = group.entries.length;
+      var isSelected = state.selectedEndpointKey === group.endpointKey;
+
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "endpoint-row" + (isSelected ? " active" : "");
+      row.setAttribute("role", "option");
+      row.dataset.endpointKey = group.endpointKey;
+      row.setAttribute("aria-selected", isSelected ? "true" : "false");
+
+      var mergedSchema = getMergedEndpointSchema(group);
+      var hasAuth = false;
+      if (
+        mergedSchema &&
+        mergedSchema.request &&
+        mergedSchema.request.headers
+      ) {
+        var reqFields = mergedSchema.request.headers.fields || [];
+        for (var j = 0; j < reqFields.length; j++) {
+          if (reqFields[j].isAuth) {
+            hasAuth = true;
+            break;
           }
-
-          resolve({
-            cookies: Array.isArray(cookies) ? cookies : [],
-            error: null,
-          });
-        });
-      } catch (error) {
-        resolve({
-          cookies: [],
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    });
-  }
-
-  async function getCookiesForScope(scope) {
-    const filters = [];
-    if (scope && typeof scope.domain === "string" && scope.domain.length > 0) {
-      filters.push({ domain: scope.domain });
-    }
-    if (scope && typeof scope.url === "string" && scope.url.length > 0) {
-      filters.push({ url: scope.url });
-    }
-
-    if (!filters.length) {
-      return { cookies: [], error: "active tab domain unavailable" };
-    }
-
-    const seen = new Set();
-    const mergedCookies = [];
-    let firstError = null;
-    let hasSuccessfulQuery = false;
-
-    for (const filter of filters) {
-      const result = await getCookiesByFilter(filter);
-      if (result.error) {
-        if (!firstError) {
-          firstError = result.error;
         }
-        continue;
       }
 
-      hasSuccessfulQuery = true;
+      var authIcon = hasAuth
+        ? ' <span class="auth-indicator" title="Uses authentication">\uD83D\uDD11</span>'
+        : "";
 
-      for (const cookie of result.cookies) {
-        const partitionKey =
-          cookie && cookie.partitionKey ? JSON.stringify(cookie.partitionKey) : "";
-        const key = [
-          cookie && cookie.name ? cookie.name : "",
-          cookie && cookie.domain ? cookie.domain : "",
-          cookie && cookie.path ? cookie.path : "",
-          cookie && cookie.storeId ? cookie.storeId : "",
-          partitionKey,
-        ].join("|");
-        if (seen.has(key)) {
-          continue;
-        }
-        seen.add(key);
-        mergedCookies.push(cookie);
+      row.innerHTML = [
+        '<div class="row-top">',
+        '  <span class="method-chip ' +
+          getMethodClass(method) +
+          '">' +
+          escapeHtml(method) +
+          "</span>",
+        '  <span class="endpoint-path" title="' +
+          escapeHtml(group.endpointKey) +
+          '">' +
+          escapeHtml(path) +
+          authIcon +
+          "</span>",
+        '  <span class="obs-chip">' + obsCount + "</span>",
+        "</div>",
+      ].join("\n");
+
+      (function (key) {
+        row.addEventListener("click", function () {
+          state.selectedEndpointKey = key;
+          render();
+        });
+      })(group.endpointKey);
+
+      fragment.appendChild(row);
+    }
+
+    elements.endpointList.appendChild(fragment);
+  }
+
+  // ── Render: Endpoint Details ─────────────────────────────
+
+  function renderEndpointDetails(groups) {
+    var group = null;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].endpointKey === state.selectedEndpointKey) {
+        group = groups[i];
+        break;
       }
     }
 
-    return {
-      cookies: mergedCookies,
-      error: hasSuccessfulQuery ? null : firstError,
-    };
-  }
+    if (!group) {
+      elements.endpointDetails.innerHTML =
+        '<div class="empty-state">Select an endpoint to inspect its schema, headers, and auth.</div>';
+      return;
+    }
 
-  function sortCookies(cookies) {
-    return cookies.slice().sort((left, right) => {
-      const leftName = left && typeof left.name === "string" ? left.name : "";
-      const rightName = right && typeof right.name === "string" ? right.name : "";
-      const nameOrder = leftName.localeCompare(rightName);
-      if (nameOrder !== 0) {
-        return nameOrder;
+    var method = group.method || "GET";
+    var mergedSchema = getMergedEndpointSchema(group);
+    var obsCount = group.entries.length;
+    var displayUrl = group.normalizedUrl || group.endpointKey;
+
+    var sections = [];
+
+    // Summary banner
+    sections.push('<section class="detail-summary">');
+    sections.push('  <div class="summary-meta">');
+    sections.push(
+      '    <span class="meta-chip ' +
+        getMethodClass(method) +
+        '">' +
+        escapeHtml(method) +
+        "</span>"
+    );
+    sections.push(
+      '    <span class="meta-chip">' +
+        obsCount +
+        " observation" +
+        (obsCount !== 1 ? "s" : "") +
+        "</span>"
+    );
+    sections.push("  </div>");
+    sections.push(
+      '  <p class="summary-url">' + escapeHtml(displayUrl) + "</p>"
+    );
+    sections.push("</section>");
+
+    if (mergedSchema) {
+      // Auth headers
+      var authHtml = renderHeadersSchema(mergedSchema.request.headers, true);
+      if (authHtml) {
+        sections.push('<section class="detail-section">');
+        sections.push("  <h3>Authentication</h3>");
+        sections.push('  <div class="section-body">' + authHtml + "</div>");
+        sections.push("</section>");
       }
 
-      const leftDomain = left && typeof left.domain === "string" ? left.domain : "";
-      const rightDomain = right && typeof right.domain === "string" ? right.domain : "";
-      return leftDomain.localeCompare(rightDomain);
-    });
+      // Request headers
+      var reqHeadersHtml = renderHeadersSchema(
+        mergedSchema.request.headers,
+        false
+      );
+      sections.push('<section class="detail-section">');
+      sections.push("  <h3>Request Headers</h3>");
+      sections.push(
+        '  <div class="section-body">' + reqHeadersHtml + "</div>"
+      );
+      sections.push("</section>");
+
+      // Request body schema
+      sections.push('<section class="detail-section">');
+      sections.push("  <h3>Request Body</h3>");
+      sections.push(
+        '  <div class="section-body">' +
+          renderBodySchema(mergedSchema.request.body) +
+          "</div>"
+      );
+      sections.push("</section>");
+
+      // Response headers
+      var resHeadersHtml = renderHeadersSchema(
+        mergedSchema.response.headers,
+        false
+      );
+      sections.push('<section class="detail-section">');
+      sections.push("  <h3>Response Headers</h3>");
+      sections.push(
+        '  <div class="section-body">' + resHeadersHtml + "</div>"
+      );
+      sections.push("</section>");
+
+      // Response body schema
+      sections.push('<section class="detail-section">');
+      sections.push("  <h3>Response Body</h3>");
+      sections.push(
+        '  <div class="section-body">' +
+          renderBodySchema(mergedSchema.response.body) +
+          "</div>"
+      );
+      sections.push("</section>");
+    } else {
+      sections.push(
+        '<div class="empty-state">Schema inference unavailable</div>'
+      );
+    }
+
+    elements.endpointDetails.innerHTML = sections.join("\n");
   }
+
+  // ── Cookies ──────────────────────────────────────────────
 
   function formatCookieFlags(cookie) {
-    const flags = [];
+    var flags = [];
 
     if (cookie && cookie.secure) {
       flags.push("Secure");
     }
-
     if (cookie && cookie.httpOnly) {
       flags.push("HttpOnly");
     }
-
     if (cookie && cookie.session) {
       flags.push("Session");
     }
-
     if (cookie && cookie.hostOnly) {
       flags.push("HostOnly");
     }
-
-    if (cookie && typeof cookie.sameSite === "string" && cookie.sameSite !== "unspecified") {
-      flags.push(`SameSite=${cookie.sameSite}`);
+    if (
+      cookie &&
+      typeof cookie.sameSite === "string" &&
+      cookie.sameSite !== "unspecified"
+    ) {
+      flags.push("SameSite=" + cookie.sameSite);
     }
-
     if (cookie && cookie.partitionKey) {
       flags.push("Partitioned");
     }
@@ -597,275 +611,22 @@
     return flags.join(", ");
   }
 
-  function formatStatusText(status, statusText) {
-    if (typeof status !== "number") {
-      return "-";
-    }
-
-    if (typeof statusText === "string" && statusText.length > 0) {
-      return `${status} ${statusText}`;
-    }
-
-    return String(status);
-  }
-
-  function formatSnapshotTime(snapshotTime) {
-    if (!(snapshotTime instanceof Date)) {
-      return "";
-    }
-
-    return snapshotTime.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  }
-
-  function formatCapturedAt(capturedAt) {
-    if (typeof capturedAt !== "string" || capturedAt.length === 0) {
-      return "unknown";
-    }
-
-    const date = new Date(capturedAt);
-    if (Number.isNaN(date.getTime())) {
-      return capturedAt;
-    }
-
-    return date.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  }
-
-  function formatDuration(durationMs) {
-    if (typeof durationMs !== "number" || Number.isNaN(durationMs)) {
-      return "unknown";
-    }
-
-    if (durationMs < 1) {
-      return "<1 ms";
-    }
-
-    return `${Math.round(durationMs)} ms`;
-  }
-
-  function getMethodClass(method) {
-    if (method === "GET") {
-      return "method-get";
-    }
-
-    if (method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE") {
-      return "method-write";
-    }
-
-    return "method-other";
-  }
-
-  function getStatusClass(status) {
-    if (typeof status !== "number") {
-      return "status-unknown";
-    }
-
-    if (status >= 500) {
-      return "status-server";
-    }
-
-    if (status >= 400) {
-      return "status-client";
-    }
-
-    if (status >= 300) {
-      return "status-redirect";
-    }
-
-    if (status >= 200) {
-      return "status-success";
-    }
-
-    return "status-unknown";
-  }
-
-  function countEndpoints(entries) {
-    const normalizer = globalScope.GladiumUrlNormalizer;
-    if (!normalizer || typeof normalizer.deduplicateEntries !== "function") {
-      return entries.length;
-    }
-
-    return normalizer.deduplicateEntries(entries).length;
-  }
-
-  function renderToolbar(entries) {
-    elements.requestCount.textContent = String(entries.length);
-
-    if (elements.endpointCount) {
-      elements.endpointCount.textContent = String(countEndpoints(entries));
-    }
-
-    if (elements.exportButton) {
-      elements.exportButton.disabled = !state.isSnapshot || state.isCapturingCookies;
-    }
-
-    if (state.isSnapshot) {
-      const snapshotTime = formatSnapshotTime(state.snapshotTime);
-      const snapshotSuffix = snapshotTime ? ` at ${snapshotTime}` : "";
-      elements.snapshotButton.textContent = "Resume Live";
-      elements.snapshotButton.classList.add("snapshot-active");
-      elements.liveIndicator.textContent = `Snapshot frozen${snapshotSuffix}`;
-      return;
-    }
-
-    elements.snapshotButton.textContent = "Take Snapshot";
-    elements.snapshotButton.classList.remove("snapshot-active");
-    elements.liveIndicator.textContent = "Live updates enabled";
-  }
-
-  function renderList(entries) {
-    elements.requestList.innerHTML = "";
-
-    if (!entries.length) {
-      elements.requestList.innerHTML =
-        '<div class="empty-state">No requests captured yet. Trigger network activity to populate the list.</div>';
-      return;
-    }
-
-    const fragment = document.createDocumentFragment();
-
-    for (const entry of entries) {
-      const method = getMethod(entry);
-      const status = getStatus(entry);
-      const contentType = getContentType(entry);
-      const score = getScore(entry);
-
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "request-row";
-      row.setAttribute("role", "option");
-      row.dataset.requestId = String(entry.id);
-      row.setAttribute("aria-selected", state.selectedId === entry.id ? "true" : "false");
-
-      if (state.selectedId === entry.id) {
-        row.classList.add("active");
+  function sortCookies(cookies) {
+    return cookies.slice().sort(function (left, right) {
+      var leftName =
+        left && typeof left.name === "string" ? left.name : "";
+      var rightName =
+        right && typeof right.name === "string" ? right.name : "";
+      var nameOrder = leftName.localeCompare(rightName);
+      if (nameOrder !== 0) {
+        return nameOrder;
       }
-
-      row.innerHTML = [
-        '<div class="row-top">',
-        `  <span class="method-chip ${getMethodClass(method)}">${escapeHtml(method)}</span>`,
-        `  <span class="status-chip ${getStatusClass(status)}">${escapeHtml(formatStatusText(status, ""))}</span>`,
-        `  <span class="content-type" title="${escapeHtml(contentType)}">${escapeHtml(contentType)}</span>`,
-        `  <span class="score-chip">Score ${escapeHtml(score)}</span>`,
-        "</div>",
-        `  <p class="request-url" title="${escapeHtml(entry.request && entry.request.url ? entry.request.url : "")}">${escapeHtml(
-          formatForList(entry.request && entry.request.url ? entry.request.url : "")
-        )}</p>`,
-      ].join("\n");
-
-      row.addEventListener("click", () => {
-        state.selectedId = entry.id;
-        render();
-      });
-
-      fragment.appendChild(row);
-    }
-
-    elements.requestList.appendChild(fragment);
-  }
-
-  function renderDetails(entries) {
-    const selectedEntry = entries.find((entry) => entry.id === state.selectedId) || null;
-
-    if (!selectedEntry) {
-      elements.requestDetails.innerHTML =
-        '<div class="empty-state">Select a request to inspect headers, request body, and response body.</div>';
-      return;
-    }
-
-    const requestUrl =
-      selectedEntry.request && typeof selectedEntry.request.url === "string"
-        ? selectedEntry.request.url
-        : "(no URL)";
-
-    const epKey = getEndpointKey(selectedEntry);
-
-    const method = getMethod(selectedEntry);
-    const status = getStatus(selectedEntry);
-    const contentType = getContentType(selectedEntry);
-    const score = getScore(selectedEntry);
-
-    const responseBody =
-      selectedEntry.response && typeof selectedEntry.response.body === "string"
-        ? formatAsPrettyJson(selectedEntry.response.body)
-        : selectedEntry.response && selectedEntry.response.bodyCaptureError
-          ? `Unable to capture body: ${selectedEntry.response.bodyCaptureError}`
-          : "(empty)";
-
-    const requestBody =
-      selectedEntry.request && typeof selectedEntry.request.body === "string"
-        ? formatAsPrettyJson(selectedEntry.request.body)
-        : "(empty)";
-
-    const requestHeaders = formatHeaders(
-      selectedEntry.request && Array.isArray(selectedEntry.request.headers)
-        ? selectedEntry.request.headers
-        : []
-    );
-
-    const responseHeaders = formatHeaders(
-      selectedEntry.response && Array.isArray(selectedEntry.response.headers)
-        ? selectedEntry.response.headers
-        : []
-    );
-
-    const statusLabel =
-      selectedEntry.response && typeof selectedEntry.response.statusText === "string"
-        ? selectedEntry.response.statusText
-        : "";
-
-    const capturedAt = formatCapturedAt(selectedEntry.capturedAt);
-    const durationMs =
-      selectedEntry.timing && typeof selectedEntry.timing.durationMs === "number"
-        ? selectedEntry.timing.durationMs
-        : null;
-
-    const entrySchema = getEntrySchema(selectedEntry);
-    const schemaJson = entrySchema
-      ? JSON.stringify(entrySchema, null, 2)
-      : "(schema unavailable)";
-
-    elements.requestDetails.innerHTML = [
-      '<section class="detail-summary">',
-      `  <p class="summary-url">${escapeHtml(requestUrl)}</p>`,
-      epKey ? `  <p class="summary-endpoint" title="Normalized endpoint key">${escapeHtml(epKey)}</p>` : "",
-      '  <div class="summary-meta">',
-      `    <span class="meta-chip">${escapeHtml(method)}</span>`,
-      `    <span class="meta-chip">${escapeHtml(formatStatusText(status, statusLabel))}</span>`,
-      `    <span class="meta-chip">${escapeHtml(contentType)}</span>`,
-      `    <span class="meta-chip">Score ${escapeHtml(score)}</span>`,
-      `    <span class="meta-chip">Captured ${escapeHtml(capturedAt)}</span>`,
-      `    <span class="meta-chip">Duration ${escapeHtml(formatDuration(durationMs))}</span>`,
-      "  </div>",
-      "</section>",
-      '<section class="detail-section">',
-      "  <h3>Request Headers</h3>",
-      `  <pre>${escapeHtml(requestHeaders)}</pre>`,
-      "</section>",
-      '<section class="detail-section">',
-      "  <h3>Request Body</h3>",
-      `  <pre>${escapeHtml(requestBody)}</pre>`,
-      "</section>",
-      '<section class="detail-section">',
-      "  <h3>Response Headers</h3>",
-      `  <pre>${escapeHtml(responseHeaders)}</pre>`,
-      "</section>",
-      '<section class="detail-section">',
-      "  <h3>Response Body</h3>",
-      `  <pre>${escapeHtml(responseBody)}</pre>`,
-      "</section>",
-      '<section class="detail-section">',
-      "  <h3>Inferred Schema</h3>",
-      `  <pre>${escapeHtml(schemaJson)}</pre>`,
-      "</section>",
-    ].join("\n");
+      var leftDomain =
+        left && typeof left.domain === "string" ? left.domain : "";
+      var rightDomain =
+        right && typeof right.domain === "string" ? right.domain : "";
+      return leftDomain.localeCompare(rightDomain);
+    });
   }
 
   function renderCookies() {
@@ -889,70 +650,551 @@
     }
 
     if (state.snapshotCookieError) {
-      elements.cookieList.innerHTML = `<div class="empty-state">Unable to capture cookies: ${escapeHtml(
-        state.snapshotCookieError
-      )}</div>`;
+      elements.cookieList.innerHTML =
+        '<div class="empty-state">Unable to capture cookies: ' +
+        escapeHtml(state.snapshotCookieError) +
+        "</div>";
       return;
     }
 
     if (!state.snapshotCookies.length) {
-      const domainSuffix = state.snapshotCookieDomain
-        ? ` (${escapeHtml(state.snapshotCookieDomain)})`
+      var domainSuffix = state.snapshotCookieDomain
+        ? " (" + escapeHtml(state.snapshotCookieDomain) + ")"
         : "";
-      elements.cookieList.innerHTML = `<div class="empty-state">No cookies found for the active tab domain${domainSuffix}.</div>`;
+      elements.cookieList.innerHTML =
+        '<div class="empty-state">No cookies found for the active tab domain' +
+        domainSuffix +
+        ".</div>";
       return;
     }
 
-    const rows = state.snapshotCookies.map((cookie) => {
-      const name = cookie && typeof cookie.name === "string" && cookie.name.length > 0
-        ? cookie.name
-        : "(unnamed)";
-      const value = cookie && typeof cookie.value === "string" && cookie.value.length > 0
-        ? cookie.value
-        : "(empty)";
-      const domain = cookie && typeof cookie.domain === "string" && cookie.domain.length > 0
-        ? cookie.domain
-        : "(unknown domain)";
-      const flags = formatCookieFlags(cookie);
+    var rows = [];
+    for (var i = 0; i < state.snapshotCookies.length; i++) {
+      var cookie = state.snapshotCookies[i];
+      var name =
+        cookie && typeof cookie.name === "string" && cookie.name.length > 0
+          ? cookie.name
+          : "(unnamed)";
+      var value =
+        cookie && typeof cookie.value === "string" && cookie.value.length > 0
+          ? cookie.value
+          : "(empty)";
+      var domain =
+        cookie &&
+        typeof cookie.domain === "string" &&
+        cookie.domain.length > 0
+          ? cookie.domain
+          : "(unknown domain)";
+      var flags = formatCookieFlags(cookie);
 
-      return [
-        '<article class="cookie-row">',
-        `  <p class="cookie-name">${escapeHtml(name)}</p>`,
-        `  <p class="cookie-value">${escapeHtml(value)}</p>`,
-        `  <p class="cookie-meta">Domain: ${escapeHtml(domain)}</p>`,
-        `  <p class="cookie-meta">Flags: ${escapeHtml(flags)}</p>`,
-        "</article>",
-      ].join("\n");
-    });
+      rows.push(
+        [
+          '<article class="cookie-row">',
+          '  <p class="cookie-name">' + escapeHtml(name) + "</p>",
+          '  <p class="cookie-value">' + escapeHtml(value) + "</p>",
+          '  <p class="cookie-meta">Domain: ' + escapeHtml(domain) + "</p>",
+          '  <p class="cookie-meta">Flags: ' + escapeHtml(flags) + "</p>",
+          "</article>",
+        ].join("\n")
+      );
+    }
 
     elements.cookieList.innerHTML = rows.join("\n");
   }
 
-  async function captureSnapshotCookies(captureId) {
-    const scope = await getActiveTabCookieScope();
-    if (!state.isSnapshot || captureId !== state.snapshotCaptureId) {
-      return;
+  // ── Cookie capture ───────────────────────────────────────
+
+  function getHostnameFromUrl(url) {
+    if (typeof url !== "string" || url.length === 0) {
+      return null;
+    }
+    try {
+      return new URL(url).hostname || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function getHttpUrl(url) {
+    if (typeof url !== "string" || url.length === 0) {
+      return null;
+    }
+    try {
+      var parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return null;
+      }
+      return parsed.toString();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function getUrlFromEntries(entries) {
+    for (var i = 0; i < entries.length; i++) {
+      var candidate = getHttpUrl(
+        entries[i] && entries[i].request ? entries[i].request.url : null
+      );
+      if (candidate) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function getDomainFromEntries(entries) {
+    for (var i = 0; i < entries.length; i++) {
+      var domain = getHostnameFromUrl(
+        entries[i] && entries[i].request ? entries[i].request.url : null
+      );
+      if (domain) {
+        return domain;
+      }
+    }
+    return null;
+  }
+
+  function evaluateInInspectedWindow(expression) {
+    return new Promise(function (resolve) {
+      if (
+        typeof chrome === "undefined" ||
+        !chrome.devtools ||
+        !chrome.devtools.inspectedWindow ||
+        typeof chrome.devtools.inspectedWindow.eval !== "function"
+      ) {
+        resolve({ value: null, error: "inspectedWindow API unavailable" });
+        return;
+      }
+
+      try {
+        chrome.devtools.inspectedWindow.eval(
+          expression,
+          function (value, exceptionInfo) {
+            if (exceptionInfo && exceptionInfo.isException) {
+              resolve({
+                value: null,
+                error:
+                  exceptionInfo.value || "inspectedWindow eval failed",
+              });
+              return;
+            }
+
+            var runtimeError =
+              chrome.runtime && chrome.runtime.lastError
+                ? chrome.runtime.lastError.message
+                : null;
+            resolve({
+              value: runtimeError ? null : value,
+              error: runtimeError,
+            });
+          }
+        );
+      } catch (error) {
+        resolve({
+          value: null,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+  }
+
+  function getActiveTabCookieScope() {
+    return evaluateInInspectedWindow("window.location.href").then(
+      function (evalResult) {
+        var inspectedUrl = getHttpUrl(evalResult.value);
+        if (inspectedUrl) {
+          return {
+            domain: getHostnameFromUrl(inspectedUrl),
+            url: inspectedUrl,
+          };
+        }
+
+        var fallbackUrl = getUrlFromEntries(state.liveEntries);
+        return {
+          domain: fallbackUrl
+            ? getHostnameFromUrl(fallbackUrl)
+            : getDomainFromEntries(state.liveEntries),
+          url: fallbackUrl,
+        };
+      }
+    );
+  }
+
+  function getCookiesByFilter(filter) {
+    return new Promise(function (resolve) {
+      if (
+        typeof chrome === "undefined" ||
+        !chrome.cookies ||
+        typeof chrome.cookies.getAll !== "function"
+      ) {
+        resolve({ cookies: [], error: "cookies API unavailable" });
+        return;
+      }
+
+      try {
+        chrome.cookies.getAll(filter, function (cookies) {
+          var runtimeError =
+            chrome.runtime && chrome.runtime.lastError
+              ? chrome.runtime.lastError.message
+              : null;
+          if (runtimeError) {
+            resolve({ cookies: [], error: runtimeError });
+            return;
+          }
+          resolve({
+            cookies: Array.isArray(cookies) ? cookies : [],
+            error: null,
+          });
+        });
+      } catch (error) {
+        resolve({
+          cookies: [],
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+  }
+
+  function getCookiesForScope(scope) {
+    var filters = [];
+    if (
+      scope &&
+      typeof scope.domain === "string" &&
+      scope.domain.length > 0
+    ) {
+      filters.push({ domain: scope.domain });
+    }
+    if (scope && typeof scope.url === "string" && scope.url.length > 0) {
+      filters.push({ url: scope.url });
     }
 
-    if (!scope || (!scope.domain && !scope.url)) {
-      state.snapshotCookieDomain = null;
-      state.snapshotCookieError = "active tab domain unavailable";
-      state.snapshotCookies = [];
-      state.isCapturingCookies = false;
-      render();
-      return;
+    if (!filters.length) {
+      return Promise.resolve({
+        cookies: [],
+        error: "active tab domain unavailable",
+      });
     }
 
-    const cookieResult = await getCookiesForScope(scope);
-    if (!state.isSnapshot || captureId !== state.snapshotCaptureId) {
-      return;
+    var seen = {};
+    var mergedCookies = [];
+    var firstError = null;
+    var hasSuccessfulQuery = false;
+
+    function processFilter(index) {
+      if (index >= filters.length) {
+        return Promise.resolve({
+          cookies: mergedCookies,
+          error: hasSuccessfulQuery ? null : firstError,
+        });
+      }
+
+      return getCookiesByFilter(filters[index]).then(function (result) {
+        if (result.error) {
+          if (!firstError) {
+            firstError = result.error;
+          }
+        } else {
+          hasSuccessfulQuery = true;
+          for (var c = 0; c < result.cookies.length; c++) {
+            var cookie = result.cookies[c];
+            var partitionKey =
+              cookie && cookie.partitionKey
+                ? JSON.stringify(cookie.partitionKey)
+                : "";
+            var key = [
+              cookie && cookie.name ? cookie.name : "",
+              cookie && cookie.domain ? cookie.domain : "",
+              cookie && cookie.path ? cookie.path : "",
+              cookie && cookie.storeId ? cookie.storeId : "",
+              partitionKey,
+            ].join("|");
+            if (!seen[key]) {
+              seen[key] = true;
+              mergedCookies.push(cookie);
+            }
+          }
+        }
+        return processFilter(index + 1);
+      });
     }
 
-    state.snapshotCookieDomain = scope.domain;
-    state.snapshotCookies = sortCookies(cookieResult.cookies);
-    state.snapshotCookieError = cookieResult.error;
-    state.isCapturingCookies = false;
-    render();
+    return processFilter(0);
+  }
+
+  function captureSnapshotCookies(captureId) {
+    getActiveTabCookieScope().then(function (scope) {
+      if (!state.isSnapshot || captureId !== state.snapshotCaptureId) {
+        return;
+      }
+
+      if (!scope || (!scope.domain && !scope.url)) {
+        state.snapshotCookieDomain = null;
+        state.snapshotCookieError = "active tab domain unavailable";
+        state.snapshotCookies = [];
+        state.isCapturingCookies = false;
+        render();
+        return;
+      }
+
+      getCookiesForScope(scope).then(function (cookieResult) {
+        if (!state.isSnapshot || captureId !== state.snapshotCaptureId) {
+          return;
+        }
+
+        state.snapshotCookieDomain = scope.domain;
+        state.snapshotCookies = sortCookies(cookieResult.cookies);
+        state.snapshotCookieError = cookieResult.error;
+        state.isCapturingCookies = false;
+        render();
+      });
+    });
+  }
+
+  // ── Export ────────────────────────────────────────────────
+
+  function normalizeHeaders(headers) {
+    if (!Array.isArray(headers)) {
+      return [];
+    }
+    var result = [];
+    for (var i = 0; i < headers.length; i++) {
+      var header = headers[i];
+      if (!header || typeof header.name !== "string") {
+        continue;
+      }
+      result.push({
+        name: header.name,
+        value: header.value !== undefined ? String(header.value) : "",
+      });
+    }
+    return result;
+  }
+
+  function serializeScore(score) {
+    return {
+      total: score && typeof score.total === "number" ? score.total : 0,
+      normalized:
+        score && typeof score.normalized === "number"
+          ? score.normalized
+          : null,
+      reasons: score && Array.isArray(score.reasons) ? score.reasons : [],
+    };
+  }
+
+  function getEndpointKey(entry) {
+    var normalizer = globalScope.GladiumUrlNormalizer;
+    if (!normalizer || typeof normalizer.endpointKey !== "function") {
+      return null;
+    }
+    var request = entry && entry.request ? entry.request : {};
+    return normalizer.endpointKey(request.method, request.url);
+  }
+
+  function getEntrySchema(entry) {
+    var inferrer = globalScope.GladiumSchemaInferrer;
+    if (!inferrer || typeof inferrer.inferSchema !== "function") {
+      return null;
+    }
+    return inferrer.inferSchema(entry);
+  }
+
+  function serializeRequestForExport(entry) {
+    var request = entry && entry.request ? entry.request : {};
+    var response = entry && entry.response ? entry.response : {};
+    var timing = entry && entry.timing ? entry.timing : {};
+
+    return {
+      id: entry && typeof entry.id === "number" ? entry.id : null,
+      capturedAt:
+        entry && typeof entry.capturedAt === "string"
+          ? entry.capturedAt
+          : null,
+      endpointKey: getEndpointKey(entry),
+      schema: getEntrySchema(entry),
+      score: serializeScore(entry ? entry.score : null),
+      request: {
+        url: typeof request.url === "string" ? request.url : null,
+        method:
+          typeof request.method === "string"
+            ? request.method.toUpperCase()
+            : null,
+        headers: normalizeHeaders(request.headers),
+        body: typeof request.body === "string" ? request.body : null,
+      },
+      response: {
+        status:
+          typeof response.status === "number" ? response.status : null,
+        statusText:
+          typeof response.statusText === "string"
+            ? response.statusText
+            : null,
+        headers: normalizeHeaders(response.headers),
+        body: typeof response.body === "string" ? response.body : null,
+        contentType:
+          typeof response.contentType === "string"
+            ? response.contentType
+            : null,
+        encoding:
+          typeof response.encoding === "string" ? response.encoding : null,
+        bodyCaptureError:
+          typeof response.bodyCaptureError === "string"
+            ? response.bodyCaptureError
+            : null,
+      },
+      timing: {
+        startedDateTime:
+          typeof timing.startedDateTime === "string"
+            ? timing.startedDateTime
+            : null,
+        durationMs:
+          typeof timing.durationMs === "number" ? timing.durationMs : null,
+      },
+    };
+  }
+
+  function serializeCookieForExport(cookie) {
+    var result = {
+      name:
+        cookie && typeof cookie.name === "string" ? cookie.name : "",
+      value:
+        cookie && typeof cookie.value === "string" ? cookie.value : "",
+      domain:
+        cookie && typeof cookie.domain === "string" ? cookie.domain : "",
+      path:
+        cookie && typeof cookie.path === "string" ? cookie.path : "",
+      secure: Boolean(cookie && cookie.secure),
+      httpOnly: Boolean(cookie && cookie.httpOnly),
+      sameSite:
+        cookie && typeof cookie.sameSite === "string"
+          ? cookie.sameSite
+          : "unspecified",
+      session: Boolean(cookie && cookie.session),
+      hostOnly: Boolean(cookie && cookie.hostOnly),
+      storeId:
+        cookie && typeof cookie.storeId === "string"
+          ? cookie.storeId
+          : "",
+      expirationDate:
+        cookie && typeof cookie.expirationDate === "number"
+          ? cookie.expirationDate
+          : null,
+      partitionKey:
+        cookie && cookie.partitionKey ? cookie.partitionKey : null,
+    };
+
+    if (typeof result.expirationDate === "number") {
+      result.expiresAt = new Date(result.expirationDate * 1000).toISOString();
+    } else {
+      result.expiresAt = null;
+    }
+
+    return result;
+  }
+
+  function getSnapshotTimestamp(snapshotTime) {
+    return snapshotTime instanceof Date ? snapshotTime.toISOString() : null;
+  }
+
+  function formatNumberForFilename(value) {
+    return String(value).padStart(2, "0");
+  }
+
+  function buildSnapshotFilename(snapshotTime) {
+    var date = snapshotTime instanceof Date ? snapshotTime : new Date();
+    var yyyy = date.getFullYear();
+    var mm = formatNumberForFilename(date.getMonth() + 1);
+    var dd = formatNumberForFilename(date.getDate());
+    var hh = formatNumberForFilename(date.getHours());
+    var min = formatNumberForFilename(date.getMinutes());
+    var ss = formatNumberForFilename(date.getSeconds());
+
+    return (
+      "gladium-snapshot-" + yyyy + mm + dd + "-" + hh + min + ss + ".json"
+    );
+  }
+
+  function buildEndpointsSummary(entries) {
+    var normalizer = globalScope.GladiumUrlNormalizer;
+    if (!normalizer || typeof normalizer.deduplicateEntries !== "function") {
+      return [];
+    }
+
+    var groups = normalizer.deduplicateEntries(entries);
+    var summaries = [];
+
+    for (var i = 0; i < groups.length; i++) {
+      var group = groups[i];
+      var scores = [];
+      var requestIds = [];
+
+      for (var j = 0; j < group.entries.length; j++) {
+        scores.push(getScore(group.entries[j]));
+        requestIds.push(
+          group.entries[j] && typeof group.entries[j].id === "number"
+            ? group.entries[j].id
+            : null
+        );
+      }
+
+      var maxScore = 0;
+      for (var k = 0; k < scores.length; k++) {
+        if (scores[k] > maxScore) {
+          maxScore = scores[k];
+        }
+      }
+
+      summaries.push({
+        endpointKey: group.endpointKey,
+        normalizedUrl: group.normalizedUrl,
+        method: group.method,
+        observationCount: group.entries.length,
+        maxScore: maxScore,
+        mergedSchema: getMergedEndpointSchema(group),
+        requestIds: requestIds,
+      });
+    }
+
+    return summaries;
+  }
+
+  function buildSnapshotExportPayload() {
+    var endpoints = buildEndpointsSummary(state.snapshotEntries);
+
+    return {
+      format: "gladium-snapshot-v1",
+      exportedAt: new Date().toISOString(),
+      snapshot: {
+        capturedAt: getSnapshotTimestamp(state.snapshotTime),
+        requestCount: state.snapshotEntries.length,
+        endpointCount: endpoints.length,
+        cookieCount: state.snapshotCookies.length,
+        cookieDomain: state.snapshotCookieDomain,
+        cookieCaptureError: state.snapshotCookieError,
+      },
+      endpoints: endpoints,
+      requests: state.snapshotEntries.map(serializeRequestForExport),
+      cookies: state.snapshotCookies.map(serializeCookieForExport),
+    };
+  }
+
+  function downloadTextFile(fileName, content) {
+    var blob = new Blob([content], {
+      type: "application/json;charset=utf-8",
+    });
+    var objectUrl = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+
+    link.href = objectUrl;
+    link.download = fileName;
+    link.style.display = "none";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    globalScope.setTimeout(function () {
+      URL.revokeObjectURL(objectUrl);
+    }, 0);
   }
 
   function onExportSnapshotClick() {
@@ -960,29 +1202,35 @@
       return;
     }
 
-    const payload = buildSnapshotExportPayload();
-    const json = JSON.stringify(payload, null, 2);
-    const fileName = buildSnapshotFilename(state.snapshotTime);
+    var payload = buildSnapshotExportPayload();
+    var json = JSON.stringify(payload, null, 2);
+    var fileName = buildSnapshotFilename(state.snapshotTime);
 
     try {
       downloadTextFile(fileName, json);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      elements.liveIndicator.textContent = `Export failed: ${errorMessage}`;
+      var errorMessage =
+        error instanceof Error ? error.message : String(error);
+      elements.liveIndicator.textContent = "Export failed: " + errorMessage;
     }
   }
 
+  // ── Main render ──────────────────────────────────────────
+
   function render() {
-    const entries = getDisplayEntries();
-    ensureValidSelection(entries);
-    renderToolbar(entries);
-    renderList(entries);
-    renderDetails(entries);
+    var entries = getDisplayEntries();
+    var groups = sortGroups(getEndpointGroups(entries));
+    ensureValidSelection(groups);
+    renderToolbar(entries, groups);
+    renderEndpointList(groups);
+    renderEndpointDetails(groups);
     renderCookies();
   }
 
+  // ── Polling + snapshot ───────────────────────────────────
+
   function loadEntriesFromRecorder() {
-    const recorder = globalScope.GladiumRequestRecorder;
+    var recorder = globalScope.GladiumRequestRecorder;
     if (!recorder || typeof recorder.getEntries !== "function") {
       return;
     }
@@ -993,7 +1241,8 @@
       return;
     }
 
-    const signature = getListSignature(state.liveEntries);
+    var groups = getEndpointGroups(state.liveEntries);
+    var signature = getListSignature(groups, state.liveEntries.length);
     if (signature === state.lastListSignature) {
       return;
     }
@@ -1017,7 +1266,7 @@
       return;
     }
 
-    const captureId = state.snapshotCaptureId + 1;
+    var captureId = state.snapshotCaptureId + 1;
     state.snapshotCaptureId = captureId;
     state.isSnapshot = true;
     state.snapshotTime = new Date();
@@ -1034,7 +1283,7 @@
     loadEntriesFromRecorder();
     render();
 
-    globalScope.setInterval(() => {
+    globalScope.setInterval(function () {
       loadEntriesFromRecorder();
     }, POLL_INTERVAL_MS);
   }
@@ -1051,7 +1300,8 @@
     }
 
     if (!globalScope.GladiumRequestRecorder) {
-      elements.liveIndicator.textContent = "Recorder unavailable in this context.";
+      elements.liveIndicator.textContent =
+        "Recorder unavailable in this context.";
     }
 
     startPolling();
