@@ -1475,10 +1475,42 @@
   font-family: var(--ds-font-family-mono);
   font-size: var(--ds-font-size-xs);
   line-height: 1.45;
-  max-height: 16rem;
-  overflow: auto;
+  overflow-x: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.incoming-body-preview.json {
+  color: var(--ds-color-neutral-200);
+}
+
+.incoming-token {
+  color: var(--ds-color-neutral-200);
+}
+
+.incoming-token.key {
+  color: var(--ds-color-info);
+}
+
+.incoming-token.string {
+  color: var(--ds-color-success);
+}
+
+.incoming-token.number {
+  color: var(--ds-color-warning);
+}
+
+.incoming-token.boolean {
+  color: var(--ds-color-primary);
+}
+
+.incoming-token.null {
+  color: var(--ds-color-danger);
+}
+
+.incoming-token.punctuation {
+  color: var(--ds-color-neutral-400);
 }
 
 /* GraphQL + schema */
