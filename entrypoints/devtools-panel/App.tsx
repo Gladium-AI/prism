@@ -59,6 +59,7 @@ function App() {
             group={controller.selectedGroup}
             mergedSchema={controller.selectedMergedSchema}
             graphQLOperation={controller.selectedGraphQLOperation}
+            restEndpoint={controller.selectedRestEndpoint}
           />
           <CookieSection
             isSnapshot={controller.isSnapshot}

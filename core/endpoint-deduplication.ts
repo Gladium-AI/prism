@@ -1,6 +1,6 @@
 import type { EndpointEntryLike, EndpointGroup } from './types';
 import { parseGraphQLOperation } from './graphql-operation';
-import { endpointKey, normalizeUrl } from './url-normalizer';
+import { endpointPathKey, normalizeUrl, normalizeUrlPathOnly } from './url-normalizer';
 
 export function deduplicateEntries<TEntry extends EndpointEntryLike>(
   entries: readonly TEntry[],
@@ -14,20 +14,28 @@ export function deduplicateEntries<TEntry extends EndpointEntryLike>(
   for (const entry of entries) {
     const request = entry.request ?? {};
     const graphQLOperation = parseGraphQLOperation(request);
-    const key = graphQLOperation ? graphQLOperation.operationKey : endpointKey(request.method, request.url);
+    const key = graphQLOperation
+      ? graphQLOperation.operationKey
+      : endpointPathKey(request.method, request.url);
+    const normalizedUrl =
+      typeof request.url === 'string'
+        ? graphQLOperation
+          ? normalizeUrl(request.url)
+          : normalizeUrlPathOnly(request.url)
+        : null;
 
     if (!(key in groups)) {
       groups[key] = {
         endpointKey: key,
-        normalizedUrl: typeof request.url === 'string' ? normalizeUrl(request.url) : null,
+        normalizedUrl,
         method: typeof request.method === 'string' ? request.method.toUpperCase() : 'GET',
         entries: [],
       };
       order.push(key);
     }
 
-    if (!groups[key].normalizedUrl && typeof request.url === 'string') {
-      groups[key].normalizedUrl = normalizeUrl(request.url);
+    if (!groups[key].normalizedUrl && normalizedUrl) {
+      groups[key].normalizedUrl = normalizedUrl;
     }
 
     groups[key].entries.push(entry);

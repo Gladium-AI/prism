@@ -99,10 +99,42 @@ export function normalizeUrl(url: string): string | null {
   }
 }
 
+export function normalizeUrlPathOnly(url: string): string | null {
+  if (url.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+
+    const path = normalizePath(parsed.pathname);
+    return `${parsed.protocol}//${parsed.host}${path}`;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeMethod(method: string | null | undefined): string {
+  return typeof method === 'string' && method.length > 0 ? method.toUpperCase() : 'GET';
+}
+
 export function endpointKey(method: string | null | undefined, url: string | null | undefined): string {
-  const normalizedMethod =
-    typeof method === 'string' && method.length > 0 ? method.toUpperCase() : 'GET';
+  const normalizedMethod = normalizeMethod(method);
   const normalizedUrl = typeof url === 'string' ? normalizeUrl(url) : null;
+
+  if (normalizedUrl === null) {
+    return `${normalizedMethod} ${typeof url === 'string' ? url : '(unknown)'}`;
+  }
+
+  return `${normalizedMethod} ${normalizedUrl}`;
+}
+
+export function endpointPathKey(method: string | null | undefined, url: string | null | undefined): string {
+  const normalizedMethod = normalizeMethod(method);
+  const normalizedUrl = typeof url === 'string' ? normalizeUrlPathOnly(url) : null;
 
   if (normalizedUrl === null) {
     return `${normalizedMethod} ${typeof url === 'string' ? url : '(unknown)'}`;
