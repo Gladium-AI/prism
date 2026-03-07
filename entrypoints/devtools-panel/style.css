@@ -624,6 +624,17 @@ body {
   word-break: break-word;
 }
 
+.header-values {
+  display: grid;
+  gap: 4px;
+}
+
+.header-value-item {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .header-meta {
   white-space: normal;
 }

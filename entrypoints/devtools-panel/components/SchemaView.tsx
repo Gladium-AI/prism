@@ -129,15 +129,27 @@ export function BodySchemaView({ bodySchema }: { bodySchema: BodySchema | null |
   );
 }
 
-function HeaderRow({ field, preview }: { field: HeaderField; preview: string }) {
+function HeaderRow({ field, values }: { field: HeaderField; values: string[] }) {
+  const displayValues = values.length > 0 ? values : [''];
+
   return (
     <tr className={field.isAuth ? 'auth-row' : ''}>
       <td className="header-name">
         {field.name}
         {field.isAuth ? <span className="auth-badge">AUTH</span> : null}
       </td>
-      <td className="header-value" title={preview}>
-        {preview}
+      <td className="header-value">
+        <div className="header-values">
+          {displayValues.map((value, index) => (
+            <div
+              className="header-value-item"
+              key={`${field.name}-value-${index}`}
+              title={value.length > 0 ? value : '(empty)'}
+            >
+              {value.length > 0 ? value : '(empty)'}
+            </div>
+          ))}
+        </div>
       </td>
       <td className="header-type">{field.valueType || 'unknown'}</td>
       <td className="header-meta">
@@ -153,11 +165,11 @@ function HeaderRow({ field, preview }: { field: HeaderField; preview: string }) 
 export function HeadersSchemaTable({
   headersSchema,
   showAuthOnly,
-  headerExamples,
+  headerValues,
 }: {
   headersSchema: HeadersSchema | null | undefined;
   showAuthOnly: boolean;
-  headerExamples?: Record<string, string>;
+  headerValues?: Record<string, string[]>;
 }) {
   if (!headersSchema || !Array.isArray(headersSchema.fields) || headersSchema.fields.length === 0) {
     return showAuthOnly ? null : <div className="schema-note">No headers</div>;
@@ -176,17 +188,15 @@ export function HeadersSchemaTable({
       <thead>
         <tr>
           <th>Header</th>
-          <th>Example</th>
+          <th>Values</th>
           <th>Type</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         {fields.map((field) => {
-          const preview =
-            headerExamples?.[field.name.toLowerCase()] ??
-            (field.isAuth ? 'redacted' : '(not observed)');
-          return <HeaderRow key={field.name} field={field} preview={preview} />;
+          const values = headerValues?.[field.name.toLowerCase()] ?? [];
+          return <HeaderRow key={field.name} field={field} values={values} />;
         })}
       </tbody>
     </table>

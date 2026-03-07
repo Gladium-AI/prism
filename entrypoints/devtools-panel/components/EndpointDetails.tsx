@@ -1,6 +1,6 @@
 import type { SchemaObservation } from '@/core';
 import {
-  buildHeaderPreviewMap,
+  buildHeaderValuesMap,
   getDisplayMethod,
   getMethodClass,
   isGraphQLGroup,
@@ -42,8 +42,8 @@ export function EndpointDetails({
   const apiTypeLabel = isGraphQLGroup(group) ? 'GraphQL' : 'REST';
   const apiTypeClass = isGraphQLGroup(group) ? 'meta-chip-graphql' : 'meta-chip-rest';
 
-  const requestHeaderExamples = buildHeaderPreviewMap(group.entries, 'request');
-  const responseHeaderExamples = buildHeaderPreviewMap(group.entries, 'response');
+  const requestHeaderValues = buildHeaderValuesMap(group.entries, 'request');
+  const responseHeaderValues = buildHeaderValuesMap(group.entries, 'response');
 
   const requestHeaderFields = mergedSchema?.request.headers.fields ?? [];
   const responseHeaderFields = mergedSchema?.response.headers.fields ?? [];
@@ -83,7 +83,7 @@ export function EndpointDetails({
                   <HeadersSchemaTable
                     headersSchema={mergedSchema.request.headers}
                     showAuthOnly={true}
-                    headerExamples={requestHeaderExamples}
+                    headerValues={requestHeaderValues}
                   />
                 </div>
               </section>
@@ -96,7 +96,7 @@ export function EndpointDetails({
                   <HeadersSchemaTable
                     headersSchema={mergedSchema.request.headers}
                     showAuthOnly={false}
-                    headerExamples={requestHeaderExamples}
+                    headerValues={requestHeaderValues}
                   />
                 </div>
               </section>
@@ -118,7 +118,7 @@ export function EndpointDetails({
                   <HeadersSchemaTable
                     headersSchema={mergedSchema.response.headers}
                     showAuthOnly={false}
-                    headerExamples={responseHeaderExamples}
+                    headerValues={responseHeaderValues}
                   />
                 </div>
               </section>
