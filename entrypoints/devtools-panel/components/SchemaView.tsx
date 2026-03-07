@@ -1,3 +1,12 @@
+import {
+  Badge,
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeaderCell,
+  DataTableRow,
+} from '@/src/design-system';
 import type { BodySchema, HeaderField, HeadersSchema, JsonSchema } from '@/core';
 
 function SchemaTypeLabel({ schema }: { schema: JsonSchema | null | undefined }) {
@@ -64,7 +73,11 @@ function SchemaFields({ schema, depth }: { schema: JsonSchema; depth: number }) 
               <span className="schema-type">
                 <SchemaTypeLabel schema={field} />
               </span>
-              {field?.optional ? <span className="schema-optional">optional</span> : null}
+              {field?.optional ? (
+                <Badge className="schema-optional" variant="subtle" size="xs" uppercase={false}>
+                  optional
+                </Badge>
+              ) : null}
             </div>
             {showNestedObject ? (
               <div className="schema-indent">
@@ -90,7 +103,9 @@ export function BodySchemaView({ bodySchema }: { bodySchema: BodySchema | null |
 
   return (
     <>
-      <div className="schema-content-type">{bodySchema.contentType || 'unknown'}</div>
+      <Badge className="schema-content-type" variant="info" uppercase={false}>
+        {bodySchema.contentType || 'unknown'}
+      </Badge>
       {!bodySchema.schema ? (
         bodySchema.parseError ? (
           <div className="schema-error">Parse error: {bodySchema.parseError}</div>
@@ -165,26 +180,36 @@ function HeaderRow({ field, values }: { field: HeaderField; values: string[] }) 
   const displayValues = values.length > 0 ? values : [''];
 
   return (
-    <tr className={field.isAuth ? 'auth-row' : ''}>
-      <td className="header-name">
+    <DataTableRow className={field.isAuth ? 'auth-row' : ''}>
+      <DataTableCell className="header-name">
         {field.name}
-        {field.isAuth ? <span className="auth-badge">AUTH</span> : null}
-      </td>
-      <td className="header-value">
+        {field.isAuth ? (
+          <Badge className="auth-badge" variant="danger" size="xs">
+            AUTH
+          </Badge>
+        ) : null}
+      </DataTableCell>
+      <DataTableCell className="header-value">
         <div className="header-values">
           {displayValues.map((value, index) => (
             <HeaderValueItem key={`${field.name}-value-${index}`} value={value} />
           ))}
         </div>
-      </td>
-      <td className="header-type">{field.valueType || 'unknown'}</td>
-      <td className="header-meta">
-        {field.optional ? <span className="schema-optional">optional</span> : null}
-        {typeof field.seenCount === 'number' ? (
-          <span className="seen-count">{field.seenCount}x</span>
+      </DataTableCell>
+      <DataTableCell className="header-type">{field.valueType || 'unknown'}</DataTableCell>
+      <DataTableCell className="header-meta">
+        {field.optional ? (
+          <Badge className="schema-optional" variant="subtle" size="xs" uppercase={false}>
+            optional
+          </Badge>
         ) : null}
-      </td>
-    </tr>
+        {typeof field.seenCount === 'number' ? (
+          <Badge className="seen-count" variant="subtle" size="xs" uppercase={false}>
+            {field.seenCount}x
+          </Badge>
+        ) : null}
+      </DataTableCell>
+    </DataTableRow>
   );
 }
 
@@ -210,21 +235,21 @@ export function HeadersSchemaTable({
   }
 
   return (
-    <table className="headers-table">
-      <thead>
-        <tr>
-          <th>Header</th>
-          <th>Values</th>
-          <th>Type</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
+    <DataTable className="headers-table">
+      <DataTableHead>
+        <DataTableRow>
+          <DataTableHeaderCell>Header</DataTableHeaderCell>
+          <DataTableHeaderCell>Values</DataTableHeaderCell>
+          <DataTableHeaderCell>Type</DataTableHeaderCell>
+          <DataTableHeaderCell></DataTableHeaderCell>
+        </DataTableRow>
+      </DataTableHead>
+      <DataTableBody>
         {fields.map((field) => {
           const values = headerValues?.[field.name.toLowerCase()] ?? [];
           return <HeaderRow key={field.name} field={field} values={values} />;
         })}
-      </tbody>
-    </table>
+      </DataTableBody>
+    </DataTable>
   );
 }
