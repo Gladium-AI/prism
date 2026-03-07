@@ -67,6 +67,7 @@
   background: var(--ds-color-primary);
   border-color: var(--ds-color-primary);
   color: var(--ds-color-primary-dark);
+  box-shadow: var(--ds-shadow-glow-teal);
 }
 
 .ds-button--primary:hover:not(:disabled) {
@@ -284,6 +285,7 @@
   background: var(--ds-color-overlay-success);
   border-color: rgba(169, 235, 100, 0.35);
   color: var(--ds-color-success);
+  box-shadow: 0 0 0 1px rgba(169, 235, 100, 0.2), var(--ds-shadow-sm);
 }
 
 .ds-toggle--warning {
@@ -296,6 +298,7 @@
   background: var(--ds-color-overlay-danger);
   border-color: rgba(255, 111, 110, 0.35);
   color: var(--ds-color-danger);
+  box-shadow: 0 0 0 1px rgba(255, 111, 110, 0.2), var(--ds-shadow-sm);
 }
 
 .ds-toggle--info {

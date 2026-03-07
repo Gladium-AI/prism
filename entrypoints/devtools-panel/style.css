@@ -232,6 +232,7 @@
 .endpoint-row.active {
   border-color: var(--ds-color-primary);
   background: var(--ds-color-overlay-info);
+  box-shadow: 0 0 0 1px rgba(0, 212, 170, 0.25), var(--ds-shadow-sm);
 }
 
 .row-top {
