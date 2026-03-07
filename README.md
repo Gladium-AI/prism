@@ -42,6 +42,10 @@ The bundle contains:
 - `responses.json`: shared response schema library referenced by `responseRef`
 - `PRISM_MAP.md`: instructions for navigating the bundle
 
+## Install
+
+Download `prism-x.x.x-chrome.zip` from the [latest release](https://github.com/gladium-ai/prism/releases/latest), unzip it, open `chrome://extensions`, enable **Developer Mode**, and click **Load unpacked**.
+
 ## Local Setup (WXT)
 
 ### Prerequisites
