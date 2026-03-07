@@ -4,9 +4,12 @@ import {
   endpointKey,
   inferSchema,
   mergeEndpointGroup,
+  mergeGraphQLOperationsFromEntries,
   type BodySchema,
+  type GraphQLSelectionField,
   type HeaderField,
   type JsonSchema,
+  type MergedGraphQLOperation,
   type RecordedNetworkEntry,
   type RequestRecorder,
   type SchemaObservation,
@@ -70,6 +73,7 @@ interface EndpointSummary {
   observationCount: number;
   maxScore: number;
   mergedSchema: SchemaObservation | null;
+  graphql: MergedGraphQLOperation | null;
   requestIds: Array<number | null>;
 }
 
@@ -119,6 +123,21 @@ interface BundleEndpointAIContext {
   responseFieldAnnotations: BundleResponseFieldAnnotation[];
 }
 
+interface BundleGraphQLOperationType {
+  operationType: string;
+  operationName: string | null;
+  variables: BundleSchemaNode | null;
+  selectionSet: BundleGraphQLSelectionField[] | null;
+  rawQueries: string[];
+}
+
+interface BundleGraphQLSelectionField {
+  name: string;
+  optional?: boolean;
+  seenCount?: number;
+  fields?: BundleGraphQLSelectionField[];
+}
+
 interface BundleEndpoint {
   endpointKey: string;
   method: string;
@@ -131,6 +150,7 @@ interface BundleEndpoint {
     payload: BundlePayloadSchema | null;
   };
   responseRef: string;
+  graphql?: BundleGraphQLOperationType;
   ai?: BundleEndpointAIContext;
 }
 
@@ -425,6 +445,41 @@ function serializePayloadForBundle(bodySchema: BodySchema | null): BundlePayload
   };
 }
 
+function serializeGraphQLSelectionFieldForBundle(
+  field: GraphQLSelectionField,
+): BundleGraphQLSelectionField {
+  const nestedFields =
+    Array.isArray(field.fields) && field.fields.length > 0
+      ? field.fields.map(serializeGraphQLSelectionFieldForBundle)
+      : undefined;
+
+  return {
+    name: field.name,
+    ...(field.optional ? { optional: true } : {}),
+    ...(typeof field.seenCount === 'number' ? { seenCount: field.seenCount } : {}),
+    ...(nestedFields ? { fields: nestedFields } : {}),
+  };
+}
+
+function serializeGraphQLOperationForBundle(
+  operation: MergedGraphQLOperation | null,
+): BundleGraphQLOperationType | null {
+  if (!operation) {
+    return null;
+  }
+
+  return {
+    operationType: operation.operationType,
+    operationName: operation.operationName,
+    variables: serializeSchemaForBundle(operation.variablesSchema),
+    selectionSet:
+      Array.isArray(operation.selectionSet) && operation.selectionSet.length > 0
+        ? operation.selectionSet.map(serializeGraphQLSelectionFieldForBundle)
+        : null,
+    rawQueries: operation.rawQueries,
+  };
+}
+
 function normalizeForStableStringify(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => normalizeForStableStringify(item));
@@ -472,10 +527,14 @@ function buildPrismMapMarkdown(args: {
   capabilitiesSummary?: string | null;
 }): string {
   const sampleEndpoint = args.endpointsFile.endpoints[0] ?? null;
+  const sampleGraphQLEndpoint = args.endpointsFile.endpoints.find((endpoint) => endpoint.apiType === 'graphql') ?? null;
   const fallbackRef = Object.keys(args.responsesFile.responses)[0] ?? 'response_0001';
   const sampleResponseRef = sampleEndpoint?.responseRef ?? fallbackRef;
   const sampleMethod = sampleEndpoint?.method ?? 'GET';
   const sampleUrl = sampleEndpoint?.url ?? 'https://api.example.com/v1/resource/{id}';
+  const sampleGraphQLOperationName =
+    sampleGraphQLEndpoint?.graphql?.operationName ?? sampleGraphQLEndpoint?.endpointKey ?? 'GetExampleQuery';
+  const sampleGraphQLOperationType = sampleGraphQLEndpoint?.graphql?.operationType ?? 'query';
   const semanticGroups = getSemanticGroupBreakdown(args.endpointsFile.endpoints);
   const capabilitiesSummary = typeof args.capabilitiesSummary === 'string' ? args.capabilitiesSummary.trim() : '';
 
@@ -488,7 +547,7 @@ function buildPrismMapMarkdown(args: {
     'This bundle is designed for LLMs and coding agents. It separates endpoint indexing from response schemas so tools only load the minimum required context.',
     '',
     '## File Roles',
-    '- `endpoints.json`: Lightweight endpoint index. Includes method, normalized URL, auth headers (names + types only), request schema, and `responseRef`.',
+    '- `endpoints.json`: Lightweight endpoint index. REST entries are keyed by method + normalized URL. GraphQL entries are keyed by operation name and include a `graphql` section (operation type, variables schema, selection set, raw queries).',
     '- If AI enrichment is enabled, each endpoint includes an `ai` section with plain-language description, auth explanation, semantic group, and response field annotations.',
     '- `responses.json`: Response schema library keyed by `responseRef`. Each key contains response headers and payload schema.',
     '- `PRISM_MAP.md`: Instructions for navigating and using this bundle.',
@@ -501,7 +560,7 @@ function buildPrismMapMarkdown(args: {
         ]
       : []),
     '## Cross-Reference Workflow',
-    '1. Open `endpoints.json` and choose an endpoint by method + URL.',
+    '1. Open `endpoints.json` and choose an endpoint by key. REST keys are method + URL; GraphQL keys are operation names.',
     `2. Read its \`responseRef\`. Example endpoint: \`${sampleMethod} ${sampleUrl}\` uses \`${sampleResponseRef}\`.`,
     `3. Open \`responses.json\` and load only \`responses["${sampleResponseRef}"]\` for the response schema.`,
     '4. Combine endpoint request schema + referenced response schema to generate a scraper or integration.',
@@ -512,6 +571,13 @@ function buildPrismMapMarkdown(args: {
     '- Union types are represented as `{ "type": "mixed", "variants": ["string", "number"] }`.',
     '- Optional payload fields are marked with `optional: true` on that field node.',
     '- No raw request/response values are exported in these files.',
+    '- GraphQL entries include a structured `graphql.selectionSet` tree with per-field optionality/observation counts.',
+    '',
+    '## GraphQL Notes',
+    `- Example GraphQL key: \`${sampleGraphQLOperationName}\` (${sampleGraphQLOperationType}).`,
+    '- Use `graphql.variables` for request variable shapes and types.',
+    '- Use `graphql.selectionSet` as the requested response field tree instead of parsing `graphql.rawQueries` by default.',
+    '- `graphql.rawQueries` is provided for advanced debugging when you need original query text.',
     '',
     '## Example Usage',
     `To build a scraper for \`${sampleMethod} ${sampleUrl}\`:`,
@@ -538,19 +604,33 @@ async function downloadStructuredBundleZip(bundle: StructuredBundlePayload): Pro
   downloadBlobFile(buildBundleFilename(), blob);
 }
 
+function buildGraphQLOperationSummaryByKey(
+  groups: readonly PanelEndpointGroup[],
+): Record<string, MergedGraphQLOperation | null> {
+  const result: Record<string, MergedGraphQLOperation | null> = {};
+  for (const group of groups) {
+    result[group.endpointKey] = mergeGraphQLOperationsFromEntries(group.entries);
+  }
+  return result;
+}
+
 function buildEndpointsSummary(entries: readonly RecordedNetworkEntry[]): EndpointSummary[] {
   const groups = deduplicateEntries(entries);
+  const graphQLOperationByKey = buildGraphQLOperationSummaryByKey(groups);
+
   return groups.map((group) => {
     const maxScore = group.entries.reduce((max, entry) => Math.max(max, getScore(entry)), 0);
+    const mergedGraphQL = graphQLOperationByKey[group.endpointKey];
 
     return {
       endpointKey: group.endpointKey,
       normalizedUrl: group.normalizedUrl,
       method: group.method,
-      apiType: classifyGroups([group]).graphql.length > 0 ? 'graphql' : 'rest',
+      apiType: mergedGraphQL ? 'graphql' : 'rest',
       observationCount: group.entries.length,
       maxScore,
       mergedSchema: mergeEndpointGroup(group)?.schema ?? null,
+      graphql: mergedGraphQL,
       requestIds: group.entries.map((entry) => (typeof entry.id === 'number' ? entry.id : null)),
     };
   });
@@ -586,6 +666,7 @@ function buildStructuredBundlePayload(args: {
   groups: PanelEndpointGroup[];
   checkedEndpointKeys: Record<string, boolean>;
   mergedSchemaByKey: Record<string, SchemaObservation | null>;
+  graphQLOperationByKey: Record<string, MergedGraphQLOperation | null>;
 }): StructuredBundlePayload {
   const exportedAt = new Date().toISOString();
   const endpoints: BundleEndpoint[] = [];
@@ -599,6 +680,7 @@ function buildStructuredBundlePayload(args: {
     }
 
     const mergedSchema = args.mergedSchemaByKey[group.endpointKey];
+    const graphQLOperation = args.graphQLOperationByKey[group.endpointKey];
     const method = group.method || 'GET';
     const url = group.normalizedUrl || group.endpointKey;
     const requestFields = mergedSchema?.request.headers.fields ?? [];
@@ -621,11 +703,15 @@ function buildStructuredBundlePayload(args: {
       responses[responseRef] = responseSchemaEntry;
     }
 
+    const serializedGraphQLOperation = graphQLOperation
+      ? serializeGraphQLOperationForBundle(graphQLOperation)
+      : null;
+
     endpoints.push({
       endpointKey: group.endpointKey,
       method,
       url,
-      apiType: classifyGroups([group]).graphql.length > 0 ? 'graphql' : 'rest',
+      apiType: graphQLOperation ? 'graphql' : 'rest',
       observations: group.entries.length,
       authHeaders,
       requestSchema: {
@@ -633,6 +719,7 @@ function buildStructuredBundlePayload(args: {
         payload: serializePayloadForBundle(mergedSchema?.request.body ?? null),
       },
       responseRef,
+      ...(serializedGraphQLOperation ? { graphql: serializedGraphQLOperation } : {}),
     });
   }
 
@@ -795,6 +882,10 @@ export function usePanelController() {
     return result;
   }, [groups]);
 
+  const graphQLOperationByKey = useMemo<Record<string, MergedGraphQLOperation | null>>(() => {
+    return buildGraphQLOperationSummaryByKey(groups);
+  }, [groups]);
+
   useEffect(() => {
     setCheckedEndpointKeys((previous) => {
       const validKeys = new Set(groups.map((group) => group.endpointKey));
@@ -839,6 +930,9 @@ export function usePanelController() {
   }, [groups, selectedEndpointKey]);
 
   const selectedMergedSchema = selectedGroup ? mergedSchemaByKey[selectedGroup.endpointKey] : null;
+  const selectedGraphQLOperation = selectedGroup
+    ? graphQLOperationByKey[selectedGroup.endpointKey] ?? null
+    : null;
 
   const checkedCount = useMemo<number>(() => {
     return Object.values(checkedEndpointKeys).filter(Boolean).length;
@@ -1013,6 +1107,7 @@ export function usePanelController() {
         groups,
         checkedEndpointKeys,
         mergedSchemaByKey,
+        graphQLOperationByKey,
       });
       if (!payload.endpointsFile.endpointCount) {
         return;
@@ -1067,7 +1162,15 @@ export function usePanelController() {
       setIsExportingMap(false);
       setAIProgress(null);
     }
-  }, [displayEntries.length, isExportingMap, groups, checkedEndpointKeys, mergedSchemaByKey, aiSettings]);
+  }, [
+    displayEntries.length,
+    isExportingMap,
+    groups,
+    checkedEndpointKeys,
+    mergedSchemaByKey,
+    graphQLOperationByKey,
+    aiSettings,
+  ]);
 
   return {
     isSnapshot,
@@ -1078,8 +1181,10 @@ export function usePanelController() {
     displayEntries,
     groups,
     mergedSchemaByKey,
+    graphQLOperationByKey,
     selectedGroup,
     selectedMergedSchema,
+    selectedGraphQLOperation,
     snapshotCookies,
     snapshotCookieDomain,
     snapshotCookieError,

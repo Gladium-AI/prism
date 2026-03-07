@@ -389,6 +389,17 @@
   text-overflow: ellipsis;
 }
 
+.endpoint-subpath {
+  margin-top: var(--ds-space-1);
+  margin-left: 3.5rem;
+  font-size: var(--ds-font-size-2xs);
+  color: var(--ds-color-text-subtle);
+  font-family: var(--ds-font-family-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .auth-indicator {
   font-size: var(--ds-font-size-xs);
   margin-left: var(--ds-space-1);
@@ -442,6 +453,15 @@
   font-family: var(--ds-font-family-mono);
 }
 
+.summary-suburl {
+  margin: 0;
+  font-size: var(--ds-font-size-2xs);
+  color: var(--ds-color-text-subtle);
+  line-height: 1.4;
+  word-break: break-all;
+  font-family: var(--ds-font-family-mono);
+}
+
 .summary-meta {
   display: flex;
   flex-wrap: wrap;
@@ -468,6 +488,102 @@
 .section-body {
   padding: var(--ds-space-2);
   min-width: 0;
+}
+
+.graphql-operation-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ds-space-2);
+}
+
+.graphql-operation-name {
+  font-size: var(--ds-font-size-sm);
+  font-family: var(--ds-font-family-mono);
+  color: var(--ds-color-neutral-100);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.graphql-selection-list {
+  margin: 0;
+  padding-left: var(--ds-space-3);
+  display: grid;
+  gap: var(--ds-space-1);
+  list-style: none;
+}
+
+.graphql-selection-list > li {
+  margin: 0;
+}
+
+.graphql-selection-list > li > .graphql-selection-list {
+  margin-top: var(--ds-space-1);
+  padding-left: var(--ds-space-3);
+  border-left: 2px solid var(--ds-color-border-soft);
+}
+
+.graphql-selection-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+}
+
+.graphql-selection-name {
+  font-family: var(--ds-font-family-mono);
+  font-size: var(--ds-font-size-sm);
+  color: var(--ds-color-neutral-100);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.graphql-raw-details {
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-color-bg-soft);
+}
+
+.graphql-raw-details > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: var(--ds-space-2);
+  font-size: var(--ds-font-size-xs);
+  color: var(--ds-color-text-subtle);
+}
+
+.graphql-raw-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.graphql-raw-details > summary::before {
+  content: '▸';
+  color: var(--ds-color-text-subtle);
+  margin-right: var(--ds-space-2);
+}
+
+.graphql-raw-details[open] > summary::before {
+  content: '▾';
+}
+
+.graphql-raw-stack {
+  display: grid;
+  gap: var(--ds-space-2);
+  padding: 0 var(--ds-space-2) var(--ds-space-2) var(--ds-space-4);
+}
+
+.graphql-raw-query {
+  margin: 0;
+  padding: var(--ds-space-2);
+  border: 1px solid var(--ds-color-border-soft);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-color-bg);
+  color: var(--ds-color-neutral-100);
+  font-family: var(--ds-font-family-mono);
+  font-size: var(--ds-font-size-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* Header schema table */

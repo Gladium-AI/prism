@@ -36,6 +36,7 @@ function App() {
           checkedEndpointKeys={controller.checkedEndpointKeys}
           collapsedSections={controller.collapsedSections}
           mergedSchemaByKey={controller.mergedSchemaByKey}
+          graphQLOperationByKey={controller.graphQLOperationByKey}
           onSelectEndpoint={controller.setSelectedEndpointKey}
           onToggleChecked={(endpointKey, checked) => {
             controller.setCheckedEndpointKeys((previous) => ({
@@ -57,6 +58,7 @@ function App() {
           <EndpointDetails
             group={controller.selectedGroup}
             mergedSchema={controller.selectedMergedSchema}
+            graphQLOperation={controller.selectedGraphQLOperation}
           />
           <CookieSection
             isSnapshot={controller.isSnapshot}

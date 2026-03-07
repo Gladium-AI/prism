@@ -1,9 +1,4 @@
-import type {
-  EndpointGroup,
-  HeaderLike,
-  RecordedNetworkEntry,
-  RequestScore,
-} from '@/core';
+import { isGraphQLRequest, type EndpointGroup, type HeaderLike, type RecordedNetworkEntry, type RequestScore } from '@/core';
 
 export type PanelEndpointGroup = EndpointGroup<RecordedNetworkEntry>;
 
@@ -73,31 +68,7 @@ export function getDisplayMethod(method: string | null | undefined): string {
 }
 
 export function isGraphQLEntry(entry: RecordedNetworkEntry): boolean {
-  const request = entry.request ?? {};
-  const url = typeof request.url === 'string' ? request.url : '';
-
-  try {
-    const pathname = new URL(url).pathname.toLowerCase();
-    if (pathname.includes('/graphql')) {
-      return true;
-    }
-  } catch {
-    if (url.toLowerCase().includes('/graphql')) {
-      return true;
-    }
-  }
-
-  const body = typeof request.body === 'string' ? request.body : '';
-  if (body.length === 0) {
-    return false;
-  }
-
-  try {
-    const parsed = JSON.parse(body) as Record<string, unknown>;
-    return typeof parsed.query === 'string' || typeof parsed.mutation === 'string';
-  } catch {
-    return false;
-  }
+  return isGraphQLRequest(entry.request);
 }
 
 export function isGraphQLGroup(group: PanelEndpointGroup): boolean {
