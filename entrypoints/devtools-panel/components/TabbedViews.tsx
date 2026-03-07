@@ -16,7 +16,7 @@ import {
   type RecordedNetworkEntry,
   type SchemaObservation,
 } from '@/core';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildHeaderValuesMap,
   classifyGroups,
@@ -1300,6 +1300,8 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
   const [selectedEntryId, setSelectedEntryId] = useState<number | null>(null);
   const [detailTab, setDetailTab] = useState<SequenceDetailTab>('headers');
   const [sequenceVisibleCount, setSequenceVisibleCount] = useState<number>(SEQUENCE_OVERVIEW_PAGE_SIZE);
+  const [isSequenceLoadingMore, setIsSequenceLoadingMore] = useState(false);
+  const sequenceLoadTimerRef = useRef<number | null>(null);
 
   const orderedEntries = useMemo(
     () => displayEntries.slice().sort((left, right) => getSequenceStartMs(left) - getSequenceStartMs(right)),
@@ -1331,6 +1333,12 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
   }, [orderedEntries, selectedEntryId]);
 
   useEffect(() => {
+    if (orderedEntries.length <= sequenceVisibleCount && sequenceLoadTimerRef.current !== null) {
+      window.clearTimeout(sequenceLoadTimerRef.current);
+      sequenceLoadTimerRef.current = null;
+      setIsSequenceLoadingMore(false);
+    }
+
     setSequenceVisibleCount((previous) => {
       if (orderedEntries.length === 0) {
         return SEQUENCE_OVERVIEW_PAGE_SIZE;
@@ -1347,7 +1355,33 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
 
       return previous;
     });
-  }, [orderedEntries.length]);
+  }, [orderedEntries.length, sequenceVisibleCount]);
+
+  useEffect(() => {
+    return () => {
+      if (sequenceLoadTimerRef.current !== null) {
+        window.clearTimeout(sequenceLoadTimerRef.current);
+        sequenceLoadTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const queueSequenceLoadMore = useCallback(() => {
+    if (sequenceLoadTimerRef.current !== null || isSequenceLoadingMore) {
+      return;
+    }
+    if (sequenceVisibleCount >= orderedEntries.length) {
+      return;
+    }
+
+    setIsSequenceLoadingMore(true);
+
+    sequenceLoadTimerRef.current = window.setTimeout(() => {
+      setSequenceVisibleCount((previous) => Math.min(previous + SEQUENCE_OVERVIEW_PAGE_SIZE, orderedEntries.length));
+      setIsSequenceLoadingMore(false);
+      sequenceLoadTimerRef.current = null;
+    }, 140);
+  }, [isSequenceLoadingMore, orderedEntries.length, sequenceVisibleCount]);
 
   const selectedEntry = useMemo(
     () => orderedEntries.find((entry) => entry.id === selectedEntryId) ?? null,
@@ -1467,10 +1501,7 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
               if (!nearBottom) {
                 return;
               }
-
-              setSequenceVisibleCount((previous) =>
-                Math.min(previous + SEQUENCE_OVERVIEW_PAGE_SIZE, orderedEntries.length),
-              );
+              queueSequenceLoadMore();
             }}
           >
             {!sequenceSummary.length ? (
@@ -1492,9 +1523,9 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
                     <span className="sequence-overview-time">{item.relativeStart}ms</span>
                   </button>
                 ))}
-                {sequenceVisibleCount < orderedEntries.length ? (
-                  <div className="sequence-overview-more">
-                    Showing {sequenceVisibleCount} of {orderedEntries.length}. Scroll down to load more.
+                {isSequenceLoadingMore && sequenceVisibleCount < orderedEntries.length ? (
+                  <div className="sequence-overview-loading" role="status" aria-label="Loading more sequence events">
+                    <span className="sequence-overview-spinner" aria-hidden="true"></span>
                   </div>
                 ) : null}
               </>

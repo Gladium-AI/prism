@@ -1194,12 +1194,21 @@
   gap: var(--ds-layout-gap);
 }
 
+.sequence-overview-pane {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .sequence-overview-list {
   min-height: 0;
-  overflow: auto;
+  max-height: clamp(16rem, 46vh, 27rem);
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: var(--ds-space-2);
   display: grid;
   gap: var(--ds-space-1);
+  align-content: start;
 }
 
 .sequence-overview-item {
@@ -1254,13 +1263,25 @@
   text-overflow: ellipsis;
 }
 
-.sequence-overview-more {
-  padding: var(--ds-space-2);
-  border: 1px dashed var(--ds-color-border);
-  border-radius: var(--ds-radius-md);
-  color: var(--ds-color-text-subtle);
-  font-size: var(--ds-font-size-xs);
-  text-align: center;
+.sequence-overview-loading {
+  display: grid;
+  place-items: center;
+  padding: var(--ds-space-2) 0;
+}
+
+.sequence-overview-spinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--ds-color-border) 72%, transparent);
+  border-top-color: var(--ds-color-primary);
+  animation: sequence-overview-spin 0.72s linear infinite;
+}
+
+@keyframes sequence-overview-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .sequence-detail-pane {
