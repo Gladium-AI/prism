@@ -125,7 +125,12 @@
 }
 
 .count-pill {
+  width: 1.625rem;
   min-width: 1.625rem;
+  height: 1.625rem;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
 }
 
 .request-pill {
@@ -192,6 +197,12 @@
 }
 
 .group-count {
+  width: 1.375rem;
+  min-width: 1.375rem;
+  height: 1.375rem;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
   margin-left: auto;
 }
 
@@ -268,7 +279,12 @@
 }
 
 .obs-chip {
+  width: 1.5rem;
   min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
 }
 
 /* Endpoint details */
@@ -473,6 +489,12 @@
 
 .seen-count {
   margin-left: 0;
+  width: 1.25rem;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
 }
 
 /* Schema tree */

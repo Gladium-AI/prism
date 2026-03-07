@@ -13,6 +13,7 @@ const badgeVariantClasses = {
   methodOther: 'ds-badge--method-other',
   apiRest: 'ds-badge--api-rest',
   apiGraphql: 'ds-badge--api-graphql',
+  counter: 'ds-badge--counter',
   subtle: 'ds-badge--subtle',
 } as const;
 

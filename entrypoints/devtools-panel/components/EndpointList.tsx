@@ -45,7 +45,7 @@ function GroupHeader({
         {collapsed ? '▶' : '▼'}
       </span>
       <span className="group-label">{label}</span>
-      <Badge className="group-count" variant="subtle" uppercase={false}>
+      <Badge className="group-count" variant="counter" uppercase={false}>
         {count}
       </Badge>
     </button>
@@ -107,7 +107,7 @@ function EndpointRow({
           ) : null}
         </span>
 
-        <Badge className="obs-chip" variant="subtle" uppercase={false}>
+        <Badge className="obs-chip" variant="counter" uppercase={false}>
           {observationCount}
         </Badge>
       </div>

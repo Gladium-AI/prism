@@ -204,8 +204,14 @@ function HeaderRow({ field, values }: { field: HeaderField; values: string[] }) 
           </Badge>
         ) : null}
         {typeof field.seenCount === 'number' ? (
-          <Badge className="seen-count" variant="subtle" size="xs" uppercase={false}>
-            {field.seenCount}x
+          <Badge
+            className="seen-count"
+            variant="counter"
+            size="xs"
+            uppercase={false}
+            title={`${field.seenCount} observations`}
+          >
+            {field.seenCount}
           </Badge>
         ) : null}
       </DataTableCell>
