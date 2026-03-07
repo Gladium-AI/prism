@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { formatSnapshotTime } from '../panel-utils';
 
 interface PanelToolbarProps {
@@ -8,7 +9,8 @@ interface PanelToolbarProps {
   onSnapshotToggle(): void;
   onExportSnapshot(): void;
   onExportMap(): void;
-  mapExportDisabled: boolean;
+  canExportSnapshot: boolean;
+  canExportMap: boolean;
 }
 
 export function PanelToolbar({
@@ -19,49 +21,89 @@ export function PanelToolbar({
   onSnapshotToggle,
   onExportSnapshot,
   onExportMap,
-  mapExportDisabled,
+  canExportSnapshot,
+  canExportMap,
 }: PanelToolbarProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const snapshotSuffix = formatSnapshotTime(snapshotTime);
-  const liveIndicator = statusOverride
-    ? statusOverride
-    : isSnapshot
-      ? `Snapshot frozen${snapshotSuffix ? ` at ${snapshotSuffix}` : ''}`
-      : 'Live updates enabled';
+
+  useEffect(() => {
+    const handleDocumentClick = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleDocumentClick);
+    return () => {
+      document.removeEventListener('mousedown', handleDocumentClick);
+    };
+  }, []);
+
+  const handleExportSnapshot = () => {
+    setMenuOpen(false);
+    onExportSnapshot();
+  };
+
+  const handleExportMap = () => {
+    setMenuOpen(false);
+    onExportMap();
+  };
 
   return (
     <header className="panel-toolbar">
-      <div className="toolbar-title">
-        <p className="eyebrow">Gladium AI</p>
-        <h1>API Map</h1>
-      </div>
       <div className="toolbar-actions">
         <button
-          className={`snapshot-button${isSnapshot ? ' snapshot-active' : ''}`}
+          className={`mode-toggle${isSnapshot ? ' is-frozen' : ' is-live'}`}
           type="button"
           onClick={onSnapshotToggle}
+          title={isSnapshot && snapshotSuffix ? `Frozen at ${snapshotSuffix}` : undefined}
         >
-          {isSnapshot ? 'Resume Live' : 'Take Snapshot'}
+          <span className="mode-indicator" aria-hidden="true"></span>
+          {isSnapshot ? 'Frozen' : 'Live'}
         </button>
-        <button
-          className="export-button"
-          type="button"
-          disabled={!isSnapshot || isCapturingCookies}
-          onClick={onExportSnapshot}
-        >
-          Export JSON
-        </button>
-        <button
-          className="export-button map-export-button"
-          type="button"
-          disabled={mapExportDisabled}
-          onClick={onExportMap}
-        >
-          Export Map
-        </button>
-        <p className="live-indicator" aria-live="polite">
-          {liveIndicator}
-        </p>
+
+        <div className="export-menu" ref={menuRef}>
+          <button
+            className="export-button"
+            type="button"
+            onClick={() => setMenuOpen((previous) => !previous)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen ? 'true' : 'false'}
+          >
+            Export
+          </button>
+          {menuOpen ? (
+            <div className="export-menu-panel" role="menu">
+              <button
+                className="export-menu-item"
+                type="button"
+                role="menuitem"
+                disabled={!canExportSnapshot || isCapturingCookies}
+                onClick={handleExportSnapshot}
+              >
+                Snapshot JSON
+              </button>
+              <button
+                className="export-menu-item"
+                type="button"
+                role="menuitem"
+                disabled={!canExportMap}
+                onClick={handleExportMap}
+              >
+                Endpoint Map JSON
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
+
+      {statusOverride ? (
+        <p className="status-message" aria-live="polite">
+          {statusOverride}
+        </p>
+      ) : null}
     </header>
   );
 }

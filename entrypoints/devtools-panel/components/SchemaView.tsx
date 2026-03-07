@@ -129,12 +129,15 @@ export function BodySchemaView({ bodySchema }: { bodySchema: BodySchema | null |
   );
 }
 
-function HeaderRow({ field }: { field: HeaderField }) {
+function HeaderRow({ field, preview }: { field: HeaderField; preview: string }) {
   return (
     <tr className={field.isAuth ? 'auth-row' : ''}>
       <td className="header-name">
         {field.name}
         {field.isAuth ? <span className="auth-badge">AUTH</span> : null}
+      </td>
+      <td className="header-value" title={preview}>
+        {preview}
       </td>
       <td className="header-type">{field.valueType || 'unknown'}</td>
       <td className="header-meta">
@@ -150,9 +153,11 @@ function HeaderRow({ field }: { field: HeaderField }) {
 export function HeadersSchemaTable({
   headersSchema,
   showAuthOnly,
+  headerExamples,
 }: {
   headersSchema: HeadersSchema | null | undefined;
   showAuthOnly: boolean;
+  headerExamples?: Record<string, string>;
 }) {
   if (!headersSchema || !Array.isArray(headersSchema.fields) || headersSchema.fields.length === 0) {
     return showAuthOnly ? null : <div className="schema-note">No headers</div>;
@@ -171,14 +176,18 @@ export function HeadersSchemaTable({
       <thead>
         <tr>
           <th>Header</th>
+          <th>Example</th>
           <th>Type</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
-        {fields.map((field) => (
-          <HeaderRow key={field.name} field={field} />
-        ))}
+        {fields.map((field) => {
+          const preview =
+            headerExamples?.[field.name.toLowerCase()] ??
+            (field.isAuth ? 'redacted' : '(not observed)');
+          return <HeaderRow key={field.name} field={field} preview={preview} />;
+        })}
       </tbody>
     </table>
   );

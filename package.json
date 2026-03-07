@@ -1,6 +1,6 @@
 {
-  "name": "gladium-ai-network-snapshot-extension",
-  "description": "Chrome DevTools Network Snapshot Extension",
+  "name": "prism-devtools-extension",
+  "description": "Prism Chrome DevTools API mapping extension",
   "private": true,
   "version": "0.1.0",
   "type": "module",

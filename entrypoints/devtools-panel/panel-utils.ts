@@ -7,6 +7,92 @@ import type {
 
 export type PanelEndpointGroup = EndpointGroup<RecordedNetworkEntry>;
 
+const AUTH_HEADER_NAMES = new Set([
+  'authorization',
+  'proxy-authorization',
+  'cookie',
+  'set-cookie',
+  'x-api-key',
+  'api-key',
+  'x-auth-token',
+  'x-access-token',
+]);
+
+function isAuthHeaderName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return AUTH_HEADER_NAMES.has(lower) || lower.startsWith('x-auth-') || lower.startsWith('x-api-');
+}
+
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+export function getHeaderPreview(name: string, rawValue: unknown): string {
+  const value = collapseWhitespace(rawValue == null ? '' : String(rawValue));
+  if (value.length === 0) {
+    return '(empty)';
+  }
+
+  if (isAuthHeaderName(name)) {
+    if (/^bearer\s+/i.test(value)) {
+      const token = value.replace(/^bearer\s+/i, '');
+      const tokenPreview = token.slice(0, 3);
+      return `Bearer ${tokenPreview}${token.length > 3 ? '...' : ''}`;
+    }
+
+    if (name.toLowerCase() === 'cookie' || name.toLowerCase() === 'set-cookie') {
+      const firstPart = value.split(';')[0] ?? value;
+      const eqIndex = firstPart.indexOf('=');
+      if (eqIndex > 0) {
+        const cookieName = firstPart.slice(0, eqIndex);
+        const cookieValue = firstPart.slice(eqIndex + 1);
+        return `${cookieName}=${cookieValue.slice(0, 3)}${cookieValue.length > 3 ? '...' : ''}`;
+      }
+    }
+
+    return `${value.slice(0, 4)}${value.length > 4 ? '...' : ''}`;
+  }
+
+  return truncateText(value, 56);
+}
+
+export function buildHeaderPreviewMap(
+  entries: readonly RecordedNetworkEntry[],
+  source: 'request' | 'response',
+): Record<string, string> {
+  const previews: Record<string, string> = {};
+
+  for (const entry of entries) {
+    const headers = source === 'request' ? entry.request?.headers : entry.response?.headers;
+    if (!Array.isArray(headers)) {
+      continue;
+    }
+
+    for (const header of headers) {
+      if (!header || typeof header.name !== 'string') {
+        continue;
+      }
+
+      const lowerName = header.name.toLowerCase();
+      const preview = getHeaderPreview(header.name, header.value);
+      const existing = previews[lowerName];
+
+      if (existing === undefined || (existing === '(empty)' && preview !== '(empty)')) {
+        previews[lowerName] = preview;
+      }
+    }
+  }
+
+  return previews;
+}
+
 export function getScore(entry: RecordedNetworkEntry): number {
   return typeof entry.score?.total === 'number' ? entry.score.total : 0;
 }
@@ -257,7 +343,7 @@ export function buildSnapshotFilename(snapshotTime: Date | null): string {
   const min = formatNumberForFilename(date.getMinutes());
   const ss = formatNumberForFilename(date.getSeconds());
 
-  return `gladium-snapshot-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
+  return `prism-snapshot-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
 }
 
 export function buildMapFilename(): string {
@@ -269,5 +355,5 @@ export function buildMapFilename(): string {
   const min = formatNumberForFilename(date.getMinutes());
   const ss = formatNumberForFilename(date.getSeconds());
 
-  return `gladium-api-map-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
+  return `prism-api-map-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
 }

@@ -17,10 +17,11 @@ function App() {
         onSnapshotToggle={controller.toggleSnapshot}
         onExportSnapshot={controller.exportSnapshot}
         onExportMap={controller.exportMap}
-        mapExportDisabled={controller.checkedCount === 0}
+        canExportSnapshot={controller.isSnapshot}
+        canExportMap={controller.checkedCount > 0}
       />
 
-      <section className="panel-grid" aria-label="API Map">
+      <section className="panel-grid" aria-label="Prism API map">
         <EndpointList
           groups={controller.groups}
           requestCount={controller.displayEntries.length}
