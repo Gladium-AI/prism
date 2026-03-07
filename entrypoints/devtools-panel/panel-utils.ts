@@ -297,7 +297,7 @@ export function buildSnapshotFilename(snapshotTime: Date | null): string {
   return `prism-snapshot-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
 }
 
-export function buildMapFilename(): string {
+export function buildBundleFilename(): string {
   const date = new Date();
   const yyyy = date.getFullYear();
   const mm = formatNumberForFilename(date.getMonth() + 1);
@@ -306,5 +306,5 @@ export function buildMapFilename(): string {
   const min = formatNumberForFilename(date.getMinutes());
   const ss = formatNumberForFilename(date.getSeconds());
 
-  return `prism-api-map-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
+  return `prism-api-bundle-${yyyy}${mm}${dd}-${hh}${min}${ss}.zip`;
 }

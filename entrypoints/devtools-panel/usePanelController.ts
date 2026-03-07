@@ -12,7 +12,7 @@ import {
   type SchemaObservation,
 } from '@/core';
 import {
-  buildMapFilename,
+  buildBundleFilename,
   buildSnapshotFilename,
   classifyGroups,
   getDomainFromEntries,
@@ -28,6 +28,7 @@ import {
   sortGroups,
   type PanelEndpointGroup,
 } from './panel-utils';
+import JSZip from 'jszip';
 
 const POLL_INTERVAL_MS = 400;
 
@@ -70,56 +71,70 @@ interface SnapshotExportPayload {
   cookies: ReturnType<typeof serializeCookieForExport>[];
 }
 
-interface MapHeader {
+interface BundleHeader {
   name: string;
   type: string;
   optional?: boolean;
   authentication?: boolean;
 }
 
-interface MapSchemaNode {
+interface BundleSchemaNode {
   type: string;
   variants?: string[];
   optional?: boolean;
-  items?: MapSchemaNode | null;
-  fields?: Record<string, MapSchemaNode>;
+  items?: BundleSchemaNode | null;
+  fields?: Record<string, BundleSchemaNode>;
 }
 
-interface MapBodyNode {
+interface BundlePayloadSchema {
   contentType: string;
-  schema?: MapSchemaNode | null;
+  schema: BundleSchemaNode | null;
 }
 
-interface MapAuthHeader {
-  header: string;
+interface BundleAuthHeader {
+  name: string;
   type: string;
 }
 
-interface MapEndpoint {
+interface BundleEndpoint {
   method: string;
   url: string;
   apiType: 'graphql' | 'rest';
   observations: number;
-  authentication?: MapAuthHeader[];
-  request?: {
-    headers: MapHeader[] | null;
-    body: MapBodyNode | null;
+  authHeaders: BundleAuthHeader[];
+  requestSchema: {
+    headers: BundleHeader[] | null;
+    payload: BundlePayloadSchema | null;
   };
-  response?: {
-    headers: MapHeader[] | null;
-    body: MapBodyNode | null;
-  };
+  responseRef: string;
 }
 
-interface MapExportPayload {
-  format: 'prism-api-map-v1';
+interface EndpointsFilePayload {
+  format: 'prism-endpoints-v1';
   exportedAt: string;
   endpointCount: number;
-  endpoints: MapEndpoint[];
+  endpoints: BundleEndpoint[];
 }
 
-function downloadTextFile(fileName: string, content: string): void {
-  const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
+interface ResponseSchemaEntry {
+  headers: BundleHeader[] | null;
+  payload: BundlePayloadSchema | null;
+}
+
+interface ResponsesFilePayload {
+  format: 'prism-responses-v1';
+  exportedAt: string;
+  responseCount: number;
+  responses: Record<string, ResponseSchemaEntry>;
+}
+
+interface StructuredBundlePayload {
+  endpointsFile: EndpointsFilePayload;
+  responsesFile: ResponsesFilePayload;
+  prismMapMarkdown: string;
+}
+
+function downloadBlobFile(fileName: string, blob: Blob): void {
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement('a');
 
@@ -133,6 +148,14 @@ function downloadTextFile(fileName: string, content: string): void {
   globalThis.setTimeout(() => {
     URL.revokeObjectURL(objectUrl);
   }, 0);
+}
+
+function downloadTextFile(
+  fileName: string,
+  content: string,
+  mimeType = 'application/json;charset=utf-8',
+): void {
+  downloadBlobFile(fileName, new Blob([content], { type: mimeType }));
 }
 
 function getEvaluationError(exceptionInfo: Browser.devtools.inspectedWindow.EvaluationExceptionInfo): string {
@@ -316,7 +339,7 @@ function serializeRequestForExport(entry: RecordedNetworkEntry) {
   };
 }
 
-function serializeHeaderForMap(field: HeaderField): MapHeader {
+function serializeHeaderForBundle(field: HeaderField): BundleHeader {
   return {
     name: field.name,
     type: field.valueType || 'unknown',
@@ -325,7 +348,7 @@ function serializeHeaderForMap(field: HeaderField): MapHeader {
   };
 }
 
-function serializeSchemaForMap(schema: JsonSchema | null): MapSchemaNode | null {
+function serializeSchemaForBundle(schema: JsonSchema | null): BundleSchemaNode | null {
   if (!schema) {
     return null;
   }
@@ -337,15 +360,15 @@ function serializeSchemaForMap(schema: JsonSchema | null): MapSchemaNode | null 
   if (schema.type === 'array') {
     return {
       type: 'array',
-      items: schema.items ? serializeSchemaForMap(schema.items) : undefined,
+      items: schema.items ? serializeSchemaForBundle(schema.items) : null,
     };
   }
 
   if (schema.type === 'object' && schema.fields) {
-    const fields: Record<string, MapSchemaNode> = {};
+    const fields: Record<string, BundleSchemaNode> = {};
     for (const key of Object.keys(schema.fields)) {
       const child = schema.fields[key];
-      const serialized = serializeSchemaForMap(child);
+      const serialized = serializeSchemaForBundle(child);
       if (!serialized) {
         continue;
       }
@@ -360,15 +383,96 @@ function serializeSchemaForMap(schema: JsonSchema | null): MapSchemaNode | null 
   return { type: schema.type || 'unknown' };
 }
 
-function serializeBodyForMap(bodySchema: BodySchema | null): MapBodyNode | null {
+function serializePayloadForBundle(bodySchema: BodySchema | null): BundlePayloadSchema | null {
   if (!bodySchema) {
     return null;
   }
 
   return {
     contentType: bodySchema.contentType || 'unknown',
-    ...(bodySchema.schema ? { schema: serializeSchemaForMap(bodySchema.schema) } : {}),
+    schema: serializeSchemaForBundle(bodySchema.schema),
   };
+}
+
+function normalizeForStableStringify(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeForStableStringify(item));
+  }
+
+  if (value && typeof value === 'object') {
+    const objectValue = value as Record<string, unknown>;
+    const normalized: Record<string, unknown> = {};
+    for (const key of Object.keys(objectValue).sort()) {
+      normalized[key] = normalizeForStableStringify(objectValue[key]);
+    }
+    return normalized;
+  }
+
+  return value;
+}
+
+function getResponseSchemaSignature(entry: ResponseSchemaEntry): string {
+  return JSON.stringify(normalizeForStableStringify(entry));
+}
+
+function buildResponseRef(index: number): string {
+  return `response_${String(index).padStart(4, '0')}`;
+}
+
+function buildPrismMapMarkdown(args: {
+  endpointsFile: EndpointsFilePayload;
+  responsesFile: ResponsesFilePayload;
+}): string {
+  const sampleEndpoint = args.endpointsFile.endpoints[0] ?? null;
+  const fallbackRef = Object.keys(args.responsesFile.responses)[0] ?? 'response_0001';
+  const sampleResponseRef = sampleEndpoint?.responseRef ?? fallbackRef;
+  const sampleMethod = sampleEndpoint?.method ?? 'GET';
+  const sampleUrl = sampleEndpoint?.url ?? 'https://api.example.com/v1/resource/{id}';
+
+  return [
+    '# PRISM_MAP',
+    '',
+    'This bundle is designed for LLMs and coding agents. It separates endpoint indexing from response schemas so tools only load the minimum required context.',
+    '',
+    '## File Roles',
+    '- `endpoints.json`: Lightweight endpoint index. Includes method, normalized URL, auth headers (names + types only), request schema, and `responseRef`.',
+    '- `responses.json`: Response schema library keyed by `responseRef`. Each key contains response headers and payload schema.',
+    '- `PRISM_MAP.md`: Instructions for navigating and using this bundle.',
+    '',
+    '## Cross-Reference Workflow',
+    '1. Open `endpoints.json` and choose an endpoint by method + URL.',
+    `2. Read its \`responseRef\`. Example endpoint: \`${sampleMethod} ${sampleUrl}\` uses \`${sampleResponseRef}\`.`,
+    `3. Open \`responses.json\` and load only \`responses["${sampleResponseRef}"]\` for the response schema.`,
+    '4. Combine endpoint request schema + referenced response schema to generate a scraper or integration.',
+    '',
+    '## Schema Reading Rules',
+    '- Header schemas use `{ "name", "type" }`; `optional: true` means the field did not appear in every observation.',
+    '- Payload schemas are recursive and type-based: `object` uses `fields`, `array` uses `items`.',
+    '- Union types are represented as `{ "type": "mixed", "variants": ["string", "number"] }`.',
+    '- Optional payload fields are marked with `optional: true` on that field node.',
+    '- No raw request/response values are exported in these files.',
+    '',
+    '## Example Usage',
+    `To build a scraper for \`${sampleMethod} ${sampleUrl}\`:`,
+    `1. In \`endpoints.json\`, locate that endpoint and copy its request schema plus \`responseRef: ${sampleResponseRef}\`.`,
+    `2. In \`responses.json\`, resolve \`${sampleResponseRef}\` and apply its headers/payload schema in your parser.`,
+    '3. Generate request code using endpoint auth headers and request payload fields; generate parsing code from the response schema.',
+  ].join('\n');
+}
+
+async function downloadStructuredBundleZip(bundle: StructuredBundlePayload): Promise<void> {
+  const zip = new JSZip();
+  zip.file('endpoints.json', JSON.stringify(bundle.endpointsFile, null, 2));
+  zip.file('responses.json', JSON.stringify(bundle.responsesFile, null, 2));
+  zip.file('PRISM_MAP.md', bundle.prismMapMarkdown);
+
+  const blob = await zip.generateAsync({
+    type: 'blob',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
+
+  downloadBlobFile(buildBundleFilename(), blob);
 }
 
 function buildEndpointsSummary(entries: readonly RecordedNetworkEntry[]): EndpointSummary[] {
@@ -415,12 +519,16 @@ function buildSnapshotExportPayload(args: {
   };
 }
 
-function buildMapExportPayload(args: {
+function buildStructuredBundlePayload(args: {
   groups: PanelEndpointGroup[];
   checkedEndpointKeys: Record<string, boolean>;
   mergedSchemaByKey: Record<string, SchemaObservation | null>;
-}): MapExportPayload {
-  const endpoints: MapEndpoint[] = [];
+}): StructuredBundlePayload {
+  const exportedAt = new Date().toISOString();
+  const endpoints: BundleEndpoint[] = [];
+  const responses: Record<string, ResponseSchemaEntry> = {};
+  const responseRefBySignature = new Map<string, string>();
+  let responseCounter = 1;
 
   for (const group of args.groups) {
     if (!args.checkedEndpointKeys[group.endpointKey]) {
@@ -428,42 +536,60 @@ function buildMapExportPayload(args: {
     }
 
     const mergedSchema = args.mergedSchemaByKey[group.endpointKey];
-    const endpoint: MapEndpoint = {
-      method: group.method || 'GET',
-      url: group.normalizedUrl || group.endpointKey,
-      apiType: classifyGroups([group]).graphql.length > 0 ? 'graphql' : 'rest',
-      observations: group.entries.length,
+    const method = group.method || 'GET';
+    const url = group.normalizedUrl || group.endpointKey;
+    const requestFields = mergedSchema?.request.headers.fields ?? [];
+    const responseFields = mergedSchema?.response.headers.fields ?? [];
+    const authHeaders = requestFields
+      .filter((field) => field.isAuth)
+      .map((field) => ({ name: field.name, type: field.valueType || 'string' }));
+
+    const responseSchemaEntry: ResponseSchemaEntry = {
+      headers: responseFields.length > 0 ? responseFields.map(serializeHeaderForBundle) : null,
+      payload: serializePayloadForBundle(mergedSchema?.response.body ?? null),
     };
 
-    if (mergedSchema) {
-      const requestFields = mergedSchema.request.headers.fields ?? [];
-      const authHeaders = requestFields
-        .filter((field) => field.isAuth)
-        .map((field) => ({ header: field.name, type: field.valueType || 'string' }));
-      if (authHeaders.length > 0) {
-        endpoint.authentication = authHeaders;
-      }
-
-      endpoint.request = {
-        headers: requestFields.length > 0 ? requestFields.map(serializeHeaderForMap) : null,
-        body: serializeBodyForMap(mergedSchema.request.body),
-      };
-
-      const responseFields = mergedSchema.response.headers.fields ?? [];
-      endpoint.response = {
-        headers: responseFields.length > 0 ? responseFields.map(serializeHeaderForMap) : null,
-        body: serializeBodyForMap(mergedSchema.response.body),
-      };
+    const responseSignature = getResponseSchemaSignature(responseSchemaEntry);
+    let responseRef = responseRefBySignature.get(responseSignature);
+    if (!responseRef) {
+      responseRef = buildResponseRef(responseCounter);
+      responseCounter += 1;
+      responseRefBySignature.set(responseSignature, responseRef);
+      responses[responseRef] = responseSchemaEntry;
     }
 
-    endpoints.push(endpoint);
+    endpoints.push({
+      method,
+      url,
+      apiType: classifyGroups([group]).graphql.length > 0 ? 'graphql' : 'rest',
+      observations: group.entries.length,
+      authHeaders,
+      requestSchema: {
+        headers: requestFields.length > 0 ? requestFields.map(serializeHeaderForBundle) : null,
+        payload: serializePayloadForBundle(mergedSchema?.request.body ?? null),
+      },
+      responseRef,
+    });
   }
 
-  return {
-    format: 'prism-api-map-v1',
-    exportedAt: new Date().toISOString(),
+  const endpointsFile: EndpointsFilePayload = {
+    format: 'prism-endpoints-v1',
+    exportedAt,
     endpointCount: endpoints.length,
     endpoints,
+  };
+
+  const responsesFile: ResponsesFilePayload = {
+    format: 'prism-responses-v1',
+    exportedAt,
+    responseCount: Object.keys(responses).length,
+    responses,
+  };
+
+  return {
+    endpointsFile,
+    responsesFile,
+    prismMapMarkdown: buildPrismMapMarkdown({ endpointsFile, responsesFile }),
   };
 }
 
@@ -684,21 +810,24 @@ export function usePanelController() {
     snapshotCookieError,
   ]);
 
-  const exportMap = useCallback(() => {
+  const exportMap = useCallback(async () => {
     if (!displayEntries.length) {
       return;
     }
 
     try {
-      const payload = buildMapExportPayload({
+      const payload = buildStructuredBundlePayload({
         groups,
         checkedEndpointKeys,
         mergedSchemaByKey,
       });
-      downloadTextFile(buildMapFilename(), JSON.stringify(payload, null, 2));
+      if (!payload.endpointsFile.endpointCount) {
+        return;
+      }
+      await downloadStructuredBundleZip(payload);
       setStatusOverride(null);
     } catch (error) {
-      setStatusOverride(`Map export failed: ${error instanceof Error ? error.message : String(error)}`);
+      setStatusOverride(`Bundle export failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }, [displayEntries.length, groups, checkedEndpointKeys, mergedSchemaByKey]);
 
