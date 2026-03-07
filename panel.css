@@ -206,6 +206,29 @@ body {
   color: #1a3b65;
 }
 
+.selection-controls {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.select-control {
+  border: 1px solid #c5d3e8;
+  background: #ffffff;
+  color: var(--text-subtle);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.select-control:hover {
+  background: #e8f0fc;
+  color: var(--accent);
+}
+
 /* ── Endpoint list ──────────────────────────────────────── */
 
 .endpoint-list {
@@ -246,6 +269,15 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.endpoint-checkbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
 }
 
 .method-chip {

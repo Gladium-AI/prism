@@ -5,6 +5,8 @@
     snapshotButton: document.getElementById("snapshot-toggle"),
     exportButton: document.getElementById("snapshot-export"),
     mapExportButton: document.getElementById("map-export"),
+    selectAllButton: document.getElementById("select-all"),
+    selectNoneButton: document.getElementById("select-none"),
     liveIndicator: document.getElementById("live-indicator"),
     requestCount: document.getElementById("request-count"),
     endpointCount: document.getElementById("endpoint-count"),
@@ -18,6 +20,7 @@
     isSnapshot: false,
     snapshotTime: null,
     selectedEndpointKey: null,
+    checkedEndpointKeys: {},
     liveEntries: [],
     snapshotEntries: [],
     snapshotCookies: [],
@@ -363,6 +366,45 @@
     return groups.length + ":" + totalEntries + ":" + groups[0].endpointKey;
   }
 
+  function syncCheckedKeys(groups) {
+    // Auto-check any new endpoint keys, keep existing checked state
+    for (var i = 0; i < groups.length; i++) {
+      var key = groups[i].endpointKey;
+      if (!(key in state.checkedEndpointKeys)) {
+        state.checkedEndpointKeys[key] = true;
+      }
+    }
+    // Remove stale keys no longer present
+    var validKeys = {};
+    for (var j = 0; j < groups.length; j++) {
+      validKeys[groups[j].endpointKey] = true;
+    }
+    var allKeys = Object.keys(state.checkedEndpointKeys);
+    for (var k = 0; k < allKeys.length; k++) {
+      if (!validKeys[allKeys[k]]) {
+        delete state.checkedEndpointKeys[allKeys[k]];
+      }
+    }
+  }
+
+  function getCheckedCount() {
+    var keys = Object.keys(state.checkedEndpointKeys);
+    var count = 0;
+    for (var i = 0; i < keys.length; i++) {
+      if (state.checkedEndpointKeys[keys[i]]) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  function setAllChecked(value) {
+    var keys = Object.keys(state.checkedEndpointKeys);
+    for (var i = 0; i < keys.length; i++) {
+      state.checkedEndpointKeys[keys[i]] = value;
+    }
+  }
+
   // ── Render: Toolbar ──────────────────────────────────────
 
   function renderToolbar(entries, groups) {
@@ -378,7 +420,7 @@
     }
 
     if (elements.mapExportButton) {
-      elements.mapExportButton.disabled = groups.length === 0;
+      elements.mapExportButton.disabled = getCheckedCount() === 0;
     }
 
     if (state.isSnapshot) {
@@ -414,9 +456,9 @@
       var path = getCompactPath(group.normalizedUrl);
       var obsCount = group.entries.length;
       var isSelected = state.selectedEndpointKey === group.endpointKey;
+      var isChecked = state.checkedEndpointKeys[group.endpointKey] === true;
 
-      var row = document.createElement("button");
-      row.type = "button";
+      var row = document.createElement("div");
       row.className = "endpoint-row" + (isSelected ? " active" : "");
       row.setAttribute("role", "option");
       row.dataset.endpointKey = group.endpointKey;
@@ -444,6 +486,9 @@
 
       row.innerHTML = [
         '<div class="row-top">',
+        '  <input type="checkbox" class="endpoint-checkbox"' +
+          (isChecked ? " checked" : "") +
+          ' title="Include in export" />',
         '  <span class="method-chip ' +
           getMethodClass(method) +
           '">' +
@@ -460,7 +505,16 @@
       ].join("\n");
 
       (function (key) {
-        row.addEventListener("click", function () {
+        var checkbox = row.querySelector(".endpoint-checkbox");
+        checkbox.addEventListener("click", function (e) {
+          e.stopPropagation();
+          state.checkedEndpointKeys[key] = checkbox.checked;
+          render();
+        });
+        row.addEventListener("click", function (e) {
+          if (e.target === checkbox) {
+            return;
+          }
           state.selectedEndpointKey = key;
           render();
         });
@@ -1294,6 +1348,9 @@
 
     for (var i = 0; i < groups.length; i++) {
       var group = groups[i];
+      if (!state.checkedEndpointKeys[group.endpointKey]) {
+        continue;
+      }
       var mergedSchema = getMergedEndpointSchema(group);
       var method = group.method || "GET";
       var url = group.normalizedUrl || group.endpointKey;
@@ -1404,6 +1461,7 @@
   function render() {
     var entries = getDisplayEntries();
     var groups = sortGroups(getEndpointGroups(entries));
+    syncCheckedKeys(groups);
     ensureValidSelection(groups);
     renderToolbar(entries, groups);
     renderEndpointList(groups);
@@ -1485,6 +1543,20 @@
 
     if (elements.mapExportButton) {
       elements.mapExportButton.addEventListener("click", onMapExportClick);
+    }
+
+    if (elements.selectAllButton) {
+      elements.selectAllButton.addEventListener("click", function () {
+        setAllChecked(true);
+        render();
+      });
+    }
+
+    if (elements.selectNoneButton) {
+      elements.selectNoneButton.addEventListener("click", function () {
+        setAllChecked(false);
+        render();
+      });
     }
 
     if (!globalScope.GladiumRequestRecorder) {
