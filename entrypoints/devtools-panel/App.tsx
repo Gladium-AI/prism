@@ -81,12 +81,30 @@ function App() {
             groups={controller.groups}
             displayEntries={controller.displayEntries}
             selectedEndpointKey={controller.selectedEndpointKey}
+            checkedEndpointKeys={controller.checkedEndpointKeys}
             mergedSchemaByKey={controller.mergedSchemaByKey}
             graphQLOperationByKey={controller.graphQLOperationByKey}
             selectedGroup={controller.selectedGroup}
             selectedMergedSchema={controller.selectedMergedSchema}
             selectedGraphQLOperation={controller.selectedGraphQLOperation}
             onSelectEndpoint={controller.setSelectedEndpointKey}
+            onToggleChecked={(endpointKey, checked) => {
+              controller.setCheckedEndpointKeys((previous) => ({
+                ...previous,
+                [endpointKey]: checked,
+              }));
+            }}
+            onSetBranchChecked={(endpointKeys, checked) => {
+              controller.setCheckedEndpointKeys((previous) => {
+                const next = { ...previous };
+                for (const endpointKey of endpointKeys) {
+                  next[endpointKey] = checked;
+                }
+                return next;
+              });
+            }}
+            onSelectAll={controller.selectAll}
+            onSelectNone={controller.selectNone}
           />
         ) : null}
 

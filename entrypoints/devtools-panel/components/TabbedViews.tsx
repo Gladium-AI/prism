@@ -16,7 +16,7 @@ import {
   type RecordedNetworkEntry,
   type SchemaObservation,
 } from '@/core';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildHeaderValuesMap,
   classifyGroups,
@@ -57,6 +57,8 @@ type SequenceDetailTab =
   | 'incoming'
   | 'response-headers';
 
+const SEQUENCE_OVERVIEW_PAGE_SIZE = 120;
+
 interface HeaderPreviewRow {
   name: string;
   value: string;
@@ -92,12 +94,17 @@ interface MappingTreeTabProps {
   groups: PanelEndpointGroup[];
   displayEntries: RecordedNetworkEntry[];
   selectedEndpointKey: string | null;
+  checkedEndpointKeys: Record<string, boolean>;
   mergedSchemaByKey: Record<string, SchemaObservation | null>;
   graphQLOperationByKey: Record<string, MergedGraphQLOperation | null>;
   selectedGroup: PanelEndpointGroup | null;
   selectedMergedSchema: SchemaObservation | null;
   selectedGraphQLOperation: MergedGraphQLOperation | null;
   onSelectEndpoint(endpointKey: string): void;
+  onToggleChecked(endpointKey: string, checked: boolean): void;
+  onSetBranchChecked(endpointKeys: string[], checked: boolean): void;
+  onSelectAll(): void;
+  onSelectNone(): void;
 }
 
 interface SequenceFlowTabProps {
@@ -175,6 +182,16 @@ function sortCookieSignals(rows: Iterable<CookieSignalRow>): CookieSignalRow[] {
     }
     return left.name.localeCompare(right.name);
   });
+}
+
+function mergeCookieSignals(...sources: ReadonlyArray<readonly CookieSignalRow[]>): CookieSignalRow[] {
+  const map = new Map<string, CookieSignalRow>();
+  for (const source of sources) {
+    for (const cookie of source) {
+      addCookieSignal(map, { name: cookie.name, value: cookie.value }, cookie.observedCount);
+    }
+  }
+  return sortCookieSignals(map.values());
 }
 
 function extractSentCookieSignalsFromHeaders(headers: readonly HeaderLike[]): CookieSignalRow[] {
@@ -255,18 +272,18 @@ function collectCookieSignals(entries: readonly RecordedNetworkEntry[]): {
   const capturedMap = new Map<string, CookieSignalRow>();
 
   for (const entry of entries) {
-    const sentCookies =
-      entry.request.cookies.length > 0
-        ? extractCookieSignalsFromRecordedCookies(entry.request.cookies)
-        : extractSentCookieSignalsFromHeaders(entry.request.headers);
+    const sentCookies = mergeCookieSignals(
+      extractCookieSignalsFromRecordedCookies(entry.request.cookies),
+      extractSentCookieSignalsFromHeaders(entry.request.headers),
+    );
     for (const cookie of sentCookies) {
       addCookieSignal(sentMap, { name: cookie.name, value: cookie.value }, cookie.observedCount);
     }
 
-    const capturedCookies =
-      entry.response.cookies.length > 0
-        ? extractCookieSignalsFromRecordedCookies(entry.response.cookies)
-        : extractCapturedCookieSignalsFromHeaders(entry.response.headers);
+    const capturedCookies = mergeCookieSignals(
+      extractCookieSignalsFromRecordedCookies(entry.response.cookies),
+      extractCapturedCookieSignalsFromHeaders(entry.response.headers),
+    );
     for (const cookie of capturedCookies) {
       addCookieSignal(capturedMap, { name: cookie.name, value: cookie.value }, cookie.observedCount);
     }
@@ -458,12 +475,14 @@ function HeaderPreviewTable({
           return (
             <DataTableRow key={`${row.name}-${row.type}-${displayValue}`}>
               <DataTableCell className="module-header-name">
-                {row.name}
-                {showAuthBadge && row.isAuth ? (
-                  <Badge className="module-inline-badge" variant="danger" size="xs" uppercase={false}>
-                    auth
-                  </Badge>
-                ) : null}
+                <span className="module-header-name-content">
+                  <span className="module-header-name-label">{row.name}</span>
+                  {showAuthBadge && row.isAuth ? (
+                    <Badge className="module-inline-badge" variant="danger" size="xs" uppercase={false}>
+                      auth
+                    </Badge>
+                  ) : null}
+                </span>
               </DataTableCell>
               <DataTableCell className="module-header-value" title={safeValue}>
                 {displayValue}
@@ -510,6 +529,38 @@ function CookiesSignalList({
   );
 }
 
+function BranchSelectionCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  ariaLabel,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  onChange(nextChecked: boolean): void;
+  ariaLabel: string;
+}) {
+  const checkboxRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (checkboxRef.current) {
+      checkboxRef.current.indeterminate = indeterminate;
+    }
+  }, [indeterminate]);
+
+  return (
+    <input
+      ref={checkboxRef}
+      className="mapping-branch-checkbox"
+      type="checkbox"
+      checked={checked}
+      aria-label={ariaLabel}
+      onClick={(event) => event.stopPropagation()}
+      onChange={(event) => onChange(event.target.checked)}
+    />
+  );
+}
+
 function EndpointDetailsModules({
   displayEntries,
   selectedGroup,
@@ -524,9 +575,23 @@ function EndpointDetailsModules({
   title: string;
 }) {
   const [graphQLTab, setGraphQLTab] = useState<GraphQLOperationExplorerTab>('schema');
+  const [collapsedDetailCards, setCollapsedDetailCards] = useState<{
+    auth: boolean;
+    cookies: boolean;
+  }>({
+    auth: true,
+    cookies: true,
+  });
 
   useEffect(() => {
     setGraphQLTab('schema');
+  }, [selectedGroup?.endpointKey]);
+
+  useEffect(() => {
+    setCollapsedDetailCards({
+      auth: true,
+      cookies: true,
+    });
   }, [selectedGroup?.endpointKey]);
 
   const sessionAuthHeaders = useMemo(() => collectSessionAuthHeaders(displayEntries), [displayEntries]);
@@ -590,55 +655,96 @@ function EndpointDetailsModules({
 
       <section className="module-card">
         <header className="module-header">
-          <h3>Authentication</h3>
-          <Badge variant="count" uppercase={false}>
-            {sessionAuthHeaders.length}
-          </Badge>
+          <div className="module-header-main">
+            <h3>Authentication</h3>
+            <Badge variant="count" uppercase={false}>
+              {sessionAuthHeaders.length}
+            </Badge>
+          </div>
+          <button
+            className="module-collapse-toggle"
+            type="button"
+            aria-expanded={collapsedDetailCards.auth ? 'false' : 'true'}
+            onClick={() =>
+              setCollapsedDetailCards((previous) => ({
+                ...previous,
+                auth: !previous.auth,
+              }))
+            }
+          >
+            {collapsedDetailCards.auth ? 'Show' : 'Hide'}
+          </button>
         </header>
-        <div className="module-body auth-module-body">
-          {!sessionAuthHeaders.length ? (
-            <div className="empty-state module-empty-state">No auth headers observed in this session.</div>
-          ) : (
-            sessionAuthHeaders.map((header) => (
-              <article className="auth-value-row" key={header.name}>
-                <div className="auth-value-head">
-                  <span className="auth-value-name">{header.name}</span>
-                  <Badge variant="counter" uppercase={false}>
-                    {header.observationCount}
-                  </Badge>
-                </div>
-                <div className="auth-value-list">
-                  {header.values.map((value) => (
-                    <code key={`${header.name}-${value}`} className="auth-value-pill">
-                      {value.length > 0 ? value : '(empty)'}
-                    </code>
-                  ))}
-                </div>
-              </article>
-            ))
-          )}
-        </div>
+        {collapsedDetailCards.auth ? null : (
+          <div className="module-body auth-module-body">
+            {!sessionAuthHeaders.length ? (
+              <div className="empty-state module-empty-state">No auth headers observed in this session.</div>
+            ) : (
+              sessionAuthHeaders.map((header) => {
+                const isCookieHeader = header.name.toLowerCase() === 'cookie';
+
+                return (
+                  <article className="auth-value-row" key={header.name}>
+                    <div className="auth-value-head">
+                      <span className="auth-value-name">{header.name}</span>
+                      <Badge variant="counter" uppercase={false}>
+                        {header.observationCount}
+                      </Badge>
+                    </div>
+                    <div className="auth-value-list">
+                      {header.values.map((value) => (
+                        <code
+                          key={`${header.name}-${value}`}
+                          className={`auth-value-pill${isCookieHeader ? ' auth-value-pill--neutral' : ''}`}
+                        >
+                          {value.length > 0 ? value : '(empty)'}
+                        </code>
+                      ))}
+                    </div>
+                  </article>
+                );
+              })
+            )}
+          </div>
+        )}
       </section>
 
       <section className="module-card">
         <header className="module-header">
-          <h3>Cookies</h3>
-          <Badge variant="count" uppercase={false}>
-            {endpointCookieSignals.sent.length + endpointCookieSignals.captured.length}
-          </Badge>
+          <div className="module-header-main">
+            <h3>Cookies</h3>
+            <Badge variant="count" uppercase={false}>
+              {endpointCookieSignals.sent.length + endpointCookieSignals.captured.length}
+            </Badge>
+          </div>
+          <button
+            className="module-collapse-toggle"
+            type="button"
+            aria-expanded={collapsedDetailCards.cookies ? 'false' : 'true'}
+            onClick={() =>
+              setCollapsedDetailCards((previous) => ({
+                ...previous,
+                cookies: !previous.cookies,
+              }))
+            }
+          >
+            {collapsedDetailCards.cookies ? 'Show' : 'Hide'}
+          </button>
         </header>
-        <div className="module-body cookie-signal-stack">
-          <CookiesSignalList
-            title="Sent Cookies"
-            rows={endpointCookieSignals.sent}
-            emptyMessage="No request Cookie headers observed on this endpoint."
-          />
-          <CookiesSignalList
-            title="Captured Cookies"
-            rows={endpointCookieSignals.captured}
-            emptyMessage="No Set-Cookie headers observed on this endpoint."
-          />
-        </div>
+        {collapsedDetailCards.cookies ? null : (
+          <div className="module-body cookie-signal-stack">
+            <CookiesSignalList
+              title="Sent Cookies"
+              rows={endpointCookieSignals.sent}
+              emptyMessage="No request Cookie headers observed on this endpoint."
+            />
+            <CookiesSignalList
+              title="Captured Cookies"
+              rows={endpointCookieSignals.captured}
+              emptyMessage="No Set-Cookie headers observed on this endpoint."
+            />
+          </div>
+        )}
       </section>
 
       <section className="module-card">
@@ -964,12 +1070,17 @@ export function MappingTreeTab({
   groups,
   displayEntries,
   selectedEndpointKey,
+  checkedEndpointKeys,
   mergedSchemaByKey,
   graphQLOperationByKey,
   selectedGroup,
   selectedMergedSchema,
   selectedGraphQLOperation,
   onSelectEndpoint,
+  onToggleChecked,
+  onSetBranchChecked,
+  onSelectAll,
+  onSelectNone,
 }: MappingTreeTabProps) {
   const [collapsedBranches, setCollapsedBranches] = useState<Record<string, boolean>>({});
 
@@ -1053,9 +1164,19 @@ export function MappingTreeTab({
         <article className="pane mapping-tree-pane" aria-label="API mapping tree">
           <header className="pane-header">
             <h2>Mapping Tree</h2>
-            <Badge variant="count" uppercase={false}>
-              {branches.length} groups
-            </Badge>
+            <div className="mapping-pane-controls">
+              <Badge variant="count" uppercase={false}>
+                {branches.length} groups
+              </Badge>
+              <span className="selection-controls">
+                <button className="mapping-select-button" type="button" onClick={onSelectAll}>
+                  All
+                </button>
+                <button className="mapping-select-button" type="button" onClick={onSelectNone}>
+                  None
+                </button>
+              </span>
+            </div>
           </header>
 
           <div className="mapping-tree-scroll">
@@ -1064,22 +1185,35 @@ export function MappingTreeTab({
             ) : (
               branches.map((branch) => {
                 const isCollapsed = collapsedBranches[branch.key] === true;
+                const branchEndpointKeys = branch.endpoints.map((endpoint) => endpoint.group.endpointKey);
+                const checkedCount = branchEndpointKeys.filter((key) => checkedEndpointKeys[key] === true).length;
+                const isFullyChecked = branchEndpointKeys.length > 0 && checkedCount === branchEndpointKeys.length;
+                const isPartiallyChecked = checkedCount > 0 && checkedCount < branchEndpointKeys.length;
 
                 return (
                   <section className="mapping-branch" key={branch.key}>
-                    <button
-                      className="mapping-branch-header"
-                      type="button"
-                      onClick={() =>
-                        setCollapsedBranches((previous) => ({
-                          ...previous,
-                          [branch.key]: !previous[branch.key],
-                        }))
-                      }
-                    >
-                      <span className="mapping-branch-toggle" aria-hidden="true">
-                        {isCollapsed ? '▶' : '▼'}
-                      </span>
+                    <div className="mapping-branch-header">
+                      <button
+                        className="mapping-branch-toggle-button"
+                        type="button"
+                        aria-expanded={isCollapsed ? 'false' : 'true'}
+                        onClick={() =>
+                          setCollapsedBranches((previous) => ({
+                            ...previous,
+                            [branch.key]: !previous[branch.key],
+                          }))
+                        }
+                      >
+                        <span className="mapping-branch-toggle" aria-hidden="true">
+                          {isCollapsed ? '▶' : '▼'}
+                        </span>
+                      </button>
+                      <BranchSelectionCheckbox
+                        checked={isFullyChecked}
+                        indeterminate={isPartiallyChecked}
+                        ariaLabel={`Select ${branch.label}`}
+                        onChange={(nextChecked) => onSetBranchChecked(branchEndpointKeys, nextChecked)}
+                      />
                       <span className="mapping-branch-label">{branch.label}</span>
                       <Badge variant={branch.apiType === 'graphql' ? 'apiGraphql' : 'apiRest'} uppercase={false}>
                         {branch.apiType.toUpperCase()}
@@ -1087,7 +1221,7 @@ export function MappingTreeTab({
                       <Badge variant="counter" uppercase={false}>
                         {branch.endpoints.length}
                       </Badge>
-                    </button>
+                    </div>
 
                     {isCollapsed ? null : (
                       <div className="mapping-node-list">
@@ -1101,12 +1235,27 @@ export function MappingTreeTab({
                           const isActive = selectedEndpointKey === node.group.endpointKey;
 
                           return (
-                            <button
+                            <div
                               className={`mapping-node${isActive ? ' active' : ''}`}
-                              type="button"
+                              role="button"
+                              tabIndex={0}
                               key={node.group.endpointKey}
                               onClick={() => onSelectEndpoint(node.group.endpointKey)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault();
+                                  onSelectEndpoint(node.group.endpointKey);
+                                }
+                              }}
                             >
+                              <input
+                                className="mapping-node-checkbox"
+                                type="checkbox"
+                                checked={checkedEndpointKeys[node.group.endpointKey] === true}
+                                title="Include in export"
+                                onClick={(event) => event.stopPropagation()}
+                                onChange={(event) => onToggleChecked(node.group.endpointKey, event.target.checked)}
+                              />
                               <Badge variant={methodBadgeVariantByClass[methodClass]}>{method}</Badge>
                               <span className="mapping-node-label" title={label}>
                                 {label}
@@ -1119,7 +1268,7 @@ export function MappingTreeTab({
                               <Badge variant="counter" uppercase={false}>
                                 {node.group.entries.length}
                               </Badge>
-                            </button>
+                            </div>
                           );
                         })}
                       </div>
@@ -1148,6 +1297,7 @@ export function MappingTreeTab({
 export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: SequenceFlowTabProps) {
   const [selectedEntryId, setSelectedEntryId] = useState<number | null>(null);
   const [detailTab, setDetailTab] = useState<SequenceDetailTab>('headers');
+  const [sequenceVisibleCount, setSequenceVisibleCount] = useState<number>(SEQUENCE_OVERVIEW_PAGE_SIZE);
 
   const orderedEntries = useMemo(
     () => displayEntries.slice().sort((left, right) => getSequenceStartMs(left) - getSequenceStartMs(right)),
@@ -1178,6 +1328,25 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
     }
   }, [orderedEntries, selectedEntryId]);
 
+  useEffect(() => {
+    setSequenceVisibleCount((previous) => {
+      if (orderedEntries.length === 0) {
+        return SEQUENCE_OVERVIEW_PAGE_SIZE;
+      }
+
+      const baseline = Math.min(SEQUENCE_OVERVIEW_PAGE_SIZE, orderedEntries.length);
+      if (previous < baseline) {
+        return baseline;
+      }
+
+      if (orderedEntries.length < previous) {
+        return orderedEntries.length;
+      }
+
+      return previous;
+    });
+  }, [orderedEntries.length]);
+
   const selectedEntry = useMemo(
     () => orderedEntries.find((entry) => entry.id === selectedEntryId) ?? null,
     [orderedEntries, selectedEntryId],
@@ -1187,7 +1356,7 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
 
   const sequenceSummary = useMemo(
     () =>
-      orderedEntries.slice(0, 12).map((entry, index) => {
+      orderedEntries.slice(0, sequenceVisibleCount).map((entry, index) => {
         const kind = getSequenceEntryKind(entry);
         const relativeStart = getSequenceStartMs(entry) - timelineStartMs;
         const graphQLOperation = parseGraphQLOperation(entry.request);
@@ -1201,7 +1370,7 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
           duration: formatDuration(entry.timing.durationMs),
         };
       }),
-    [orderedEntries, timelineStartMs],
+    [orderedEntries, sequenceVisibleCount, timelineStartMs],
   );
 
   const selectedGraphQLOperation = selectedEntry ? parseGraphQLOperation(selectedEntry.request) : null;
@@ -1210,14 +1379,16 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
   const selectedResponseHeaders = selectedEntry ? toHeaderPreviewRowsFromRaw(selectedEntry.response.headers) : [];
   const selectedAuthHeaders = selectedRequestHeaders.filter((row) => row.isAuth);
   const selectedSentCookies = selectedEntry
-    ? selectedEntry.request.cookies.length > 0
-      ? extractCookieSignalsFromRecordedCookies(selectedEntry.request.cookies)
-      : extractSentCookieSignalsFromHeaders(selectedEntry.request.headers)
+    ? mergeCookieSignals(
+        extractCookieSignalsFromRecordedCookies(selectedEntry.request.cookies),
+        extractSentCookieSignalsFromHeaders(selectedEntry.request.headers),
+      )
     : [];
   const selectedCapturedCookies = selectedEntry
-    ? selectedEntry.response.cookies.length > 0
-      ? extractCookieSignalsFromRecordedCookies(selectedEntry.response.cookies)
-      : extractCapturedCookieSignalsFromHeaders(selectedEntry.response.headers)
+    ? mergeCookieSignals(
+        extractCookieSignalsFromRecordedCookies(selectedEntry.response.cookies),
+        extractCapturedCookieSignalsFromHeaders(selectedEntry.response.headers),
+      )
     : [];
 
   return (
@@ -1286,25 +1457,45 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
           <header className="pane-header">
             <h2>Sequence Overview</h2>
           </header>
-          <div className="sequence-overview-list">
+          <div
+            className="sequence-overview-list"
+            onScroll={(event) => {
+              const target = event.currentTarget;
+              const nearBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 64;
+              if (!nearBottom) {
+                return;
+              }
+
+              setSequenceVisibleCount((previous) =>
+                Math.min(previous + SEQUENCE_OVERVIEW_PAGE_SIZE, orderedEntries.length),
+              );
+            }}
+          >
             {!sequenceSummary.length ? (
               <div className="empty-state module-empty-state">No sequence events available.</div>
             ) : (
-              sequenceSummary.map((item) => (
-                <button
-                  key={item.id}
-                  className={`sequence-overview-item${selectedEntry?.id === item.id ? ' active' : ''}`}
-                  type="button"
-                  onClick={() => setSelectedEntryId(item.id)}
-                >
-                  <span className={`sequence-kind-chip ${item.kind}`}></span>
-                  <span className="sequence-overview-rank">{item.rank}.</span>
-                  <span className="sequence-overview-label" title={item.label}>
-                    {item.label}
-                  </span>
-                  <span className="sequence-overview-time">{item.relativeStart}ms</span>
-                </button>
-              ))
+              <>
+                {sequenceSummary.map((item) => (
+                  <button
+                    key={item.id}
+                    className={`sequence-overview-item${selectedEntry?.id === item.id ? ' active' : ''}`}
+                    type="button"
+                    onClick={() => setSelectedEntryId(item.id)}
+                  >
+                    <span className={`sequence-kind-chip ${item.kind}`}></span>
+                    <span className="sequence-overview-rank">{item.rank}.</span>
+                    <span className="sequence-overview-label" title={item.label}>
+                      {item.label}
+                    </span>
+                    <span className="sequence-overview-time">{item.relativeStart}ms</span>
+                  </button>
+                ))}
+                {sequenceVisibleCount < orderedEntries.length ? (
+                  <div className="sequence-overview-more">
+                    Showing {sequenceVisibleCount} of {orderedEntries.length}. Scroll down to load more.
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
         </article>
