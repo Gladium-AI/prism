@@ -18,7 +18,14 @@ function App() {
         onExportSnapshot={controller.exportSnapshot}
         onExportMap={controller.exportMap}
         canExportSnapshot={controller.isSnapshot}
-        canExportMap={controller.checkedCount > 0}
+        canExportMap={controller.checkedCount > 0 && !controller.isExportingMap}
+        isExportingMap={controller.isExportingMap}
+        aiSettings={controller.aiSettings}
+        isAISettingsLoaded={controller.isAISettingsLoaded}
+        aiProgress={controller.aiProgress}
+        onSetAIProvider={controller.setAIProvider}
+        onSetAIEnrichmentEnabled={controller.setAIEnrichmentEnabled}
+        onSetAIApiKey={controller.setAIApiKeyForProvider}
       />
 
       <section className="panel-grid" aria-label="Prism API map">

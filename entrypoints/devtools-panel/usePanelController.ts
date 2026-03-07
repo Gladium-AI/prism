@@ -29,6 +29,17 @@ import {
   type PanelEndpointGroup,
 } from './panel-utils';
 import JSZip from 'jszip';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  DEFAULT_AI_ENRICHMENT_SETTINGS,
+  getAPIKeyForProvider,
+  getProviderLabel,
+  loadAIEnrichmentSettings,
+  saveAIEnrichmentSettings,
+  type AIEnrichmentSettings,
+  type AIProvider,
+} from './ai-settings';
+import type { AIEnrichmentBatchResult, EndpointForAIEnrichment } from './ai-enrichment';
 
 const POLL_INTERVAL_MS = 400;
 
@@ -96,7 +107,20 @@ interface BundleAuthHeader {
   type: string;
 }
 
+interface BundleResponseFieldAnnotation {
+  fieldPath: string;
+  meaning: string;
+}
+
+interface BundleEndpointAIContext {
+  description: string;
+  authExplanation: string;
+  semanticGroup: string;
+  responseFieldAnnotations: BundleResponseFieldAnnotation[];
+}
+
 interface BundleEndpoint {
+  endpointKey: string;
   method: string;
   url: string;
   apiType: 'graphql' | 'rest';
@@ -107,6 +131,7 @@ interface BundleEndpoint {
     payload: BundlePayloadSchema | null;
   };
   responseRef: string;
+  ai?: BundleEndpointAIContext;
 }
 
 interface EndpointsFilePayload {
@@ -132,6 +157,12 @@ interface StructuredBundlePayload {
   endpointsFile: EndpointsFilePayload;
   responsesFile: ResponsesFilePayload;
   prismMapMarkdown: string;
+}
+
+interface AIEnrichmentProgress {
+  completed: number;
+  total: number;
+  message: string;
 }
 
 function downloadBlobFile(fileName: string, blob: Blob): void {
@@ -419,26 +450,56 @@ function buildResponseRef(index: number): string {
   return `response_${String(index).padStart(4, '0')}`;
 }
 
+function getSemanticGroupBreakdown(endpoints: readonly BundleEndpoint[]): Array<{ name: string; count: number }> {
+  const counts = new Map<string, number>();
+
+  for (const endpoint of endpoints) {
+    const semanticGroup = endpoint.ai?.semanticGroup?.trim();
+    if (!semanticGroup) {
+      continue;
+    }
+    counts.set(semanticGroup, (counts.get(semanticGroup) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name));
+}
+
 function buildPrismMapMarkdown(args: {
   endpointsFile: EndpointsFilePayload;
   responsesFile: ResponsesFilePayload;
+  capabilitiesSummary?: string | null;
 }): string {
   const sampleEndpoint = args.endpointsFile.endpoints[0] ?? null;
   const fallbackRef = Object.keys(args.responsesFile.responses)[0] ?? 'response_0001';
   const sampleResponseRef = sampleEndpoint?.responseRef ?? fallbackRef;
   const sampleMethod = sampleEndpoint?.method ?? 'GET';
   const sampleUrl = sampleEndpoint?.url ?? 'https://api.example.com/v1/resource/{id}';
+  const semanticGroups = getSemanticGroupBreakdown(args.endpointsFile.endpoints);
+  const capabilitiesSummary = typeof args.capabilitiesSummary === 'string' ? args.capabilitiesSummary.trim() : '';
 
-  return [
+  const markdownSections = [
     '# PRISM_MAP',
     '',
+    ...(capabilitiesSummary
+      ? ['## What Can I Build With This API?', capabilitiesSummary, '']
+      : []),
     'This bundle is designed for LLMs and coding agents. It separates endpoint indexing from response schemas so tools only load the minimum required context.',
     '',
     '## File Roles',
     '- `endpoints.json`: Lightweight endpoint index. Includes method, normalized URL, auth headers (names + types only), request schema, and `responseRef`.',
+    '- If AI enrichment is enabled, each endpoint includes an `ai` section with plain-language description, auth explanation, semantic group, and response field annotations.',
     '- `responses.json`: Response schema library keyed by `responseRef`. Each key contains response headers and payload schema.',
     '- `PRISM_MAP.md`: Instructions for navigating and using this bundle.',
     '',
+    ...(semanticGroups.length
+      ? [
+          '## Semantic Groups',
+          ...semanticGroups.map((group) => `- ${group.name}: ${group.count} endpoint${group.count === 1 ? '' : 's'}`),
+          '',
+        ]
+      : []),
     '## Cross-Reference Workflow',
     '1. Open `endpoints.json` and choose an endpoint by method + URL.',
     `2. Read its \`responseRef\`. Example endpoint: \`${sampleMethod} ${sampleUrl}\` uses \`${sampleResponseRef}\`.`,
@@ -457,7 +518,9 @@ function buildPrismMapMarkdown(args: {
     `1. In \`endpoints.json\`, locate that endpoint and copy its request schema plus \`responseRef: ${sampleResponseRef}\`.`,
     `2. In \`responses.json\`, resolve \`${sampleResponseRef}\` and apply its headers/payload schema in your parser.`,
     '3. Generate request code using endpoint auth headers and request payload fields; generate parsing code from the response schema.',
-  ].join('\n');
+  ];
+
+  return markdownSections.join('\n');
 }
 
 async function downloadStructuredBundleZip(bundle: StructuredBundlePayload): Promise<void> {
@@ -559,6 +622,7 @@ function buildStructuredBundlePayload(args: {
     }
 
     endpoints.push({
+      endpointKey: group.endpointKey,
       method,
       url,
       apiType: classifyGroups([group]).graphql.length > 0 ? 'graphql' : 'rest',
@@ -593,6 +657,59 @@ function buildStructuredBundlePayload(args: {
   };
 }
 
+function buildAIEnrichmentInput(bundle: StructuredBundlePayload): EndpointForAIEnrichment[] {
+  return bundle.endpointsFile.endpoints.map((endpoint) => ({
+    endpointKey: endpoint.endpointKey,
+    method: endpoint.method,
+    url: endpoint.url,
+    apiType: endpoint.apiType,
+    observations: endpoint.observations,
+    authHeaders: endpoint.authHeaders,
+    requestSchema: endpoint.requestSchema,
+    responseSchema: bundle.responsesFile.responses[endpoint.responseRef] ?? null,
+  }));
+}
+
+function applyAIEnrichmentToBundle(args: {
+  bundle: StructuredBundlePayload;
+  enrichment: AIEnrichmentBatchResult;
+}): StructuredBundlePayload {
+  const endpoints = args.bundle.endpointsFile.endpoints.map((endpoint) => {
+    const enriched = args.enrichment.endpointEnrichmentByKey[endpoint.endpointKey];
+    if (!enriched) {
+      return endpoint;
+    }
+
+    return {
+      ...endpoint,
+      ai: {
+        description: enriched.description,
+        authExplanation: enriched.authExplanation,
+        semanticGroup: enriched.semanticGroup,
+        responseFieldAnnotations: enriched.responseFieldAnnotations.map((annotation) => ({
+          fieldPath: annotation.fieldPath,
+          meaning: annotation.meaning,
+        })),
+      },
+    };
+  });
+
+  const endpointsFile: EndpointsFilePayload = {
+    ...args.bundle.endpointsFile,
+    endpoints,
+  };
+
+  return {
+    endpointsFile,
+    responsesFile: args.bundle.responsesFile,
+    prismMapMarkdown: buildPrismMapMarkdown({
+      endpointsFile,
+      responsesFile: args.bundle.responsesFile,
+      capabilitiesSummary: args.enrichment.capabilitiesSummary,
+    }),
+  };
+}
+
 export function usePanelController() {
   const [isSnapshot, setIsSnapshot] = useState(false);
   const [snapshotTime, setSnapshotTime] = useState<Date | null>(null);
@@ -606,6 +723,10 @@ export function usePanelController() {
   const [snapshotCookieError, setSnapshotCookieError] = useState<string | null>(null);
   const [isCapturingCookies, setIsCapturingCookies] = useState(false);
   const [statusOverride, setStatusOverride] = useState<string | null>(null);
+  const [aiSettings, setAISettings] = useState<AIEnrichmentSettings>(DEFAULT_AI_ENRICHMENT_SETTINGS);
+  const [isAISettingsLoaded, setIsAISettingsLoaded] = useState(false);
+  const [isExportingMap, setIsExportingMap] = useState(false);
+  const [aiProgress, setAIProgress] = useState<AIEnrichmentProgress | null>(null);
 
   const recorderRef = useRef<RequestRecorder | null>(null);
   const snapshotCaptureIdRef = useRef(0);
@@ -622,6 +743,23 @@ export function usePanelController() {
     return () => {
       recorder.stop();
       recorderRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const loadedSettings = await loadAIEnrichmentSettings();
+      if (cancelled) {
+        return;
+      }
+      setAISettings(loadedSettings);
+      setIsAISettingsLoaded(true);
+    })();
+
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -726,6 +864,58 @@ export function usePanelController() {
     });
   }, []);
 
+  const persistAISettings = useCallback(async (nextSettings: AIEnrichmentSettings) => {
+    try {
+      await saveAIEnrichmentSettings(nextSettings);
+    } catch {
+      // Keep runtime behavior non-blocking; persistence failures should not block exports.
+    }
+  }, []);
+
+  const updateAISettings = useCallback(
+    (updater: (previous: AIEnrichmentSettings) => AIEnrichmentSettings) => {
+      setAISettings((previous) => {
+        const next = updater(previous);
+        void persistAISettings(next);
+        return next;
+      });
+    },
+    [persistAISettings],
+  );
+
+  const setAIProvider = useCallback(
+    (provider: AIProvider) => {
+      updateAISettings((previous) => ({
+        ...previous,
+        provider,
+      }));
+    },
+    [updateAISettings],
+  );
+
+  const setAIEnrichmentEnabled = useCallback(
+    (enabled: boolean) => {
+      updateAISettings((previous) => ({
+        ...previous,
+        enabled,
+      }));
+    },
+    [updateAISettings],
+  );
+
+  const setAIApiKeyForProvider = useCallback(
+    (provider: AIProvider, apiKey: string) => {
+      updateAISettings((previous) => ({
+        ...previous,
+        apiKeys: {
+          ...previous.apiKeys,
+          [provider]: apiKey,
+        },
+      }));
+    },
+    [updateAISettings],
+  );
+
   const toggleSnapshot = useCallback(() => {
     if (isSnapshot) {
       snapshotCaptureIdRef.current += 1;
@@ -811,12 +1001,15 @@ export function usePanelController() {
   ]);
 
   const exportMap = useCallback(async () => {
-    if (!displayEntries.length) {
+    if (!displayEntries.length || isExportingMap) {
       return;
     }
 
+    setStatusOverride(null);
+    setIsExportingMap(true);
+
     try {
-      const payload = buildStructuredBundlePayload({
+      let payload = buildStructuredBundlePayload({
         groups,
         checkedEndpointKeys,
         mergedSchemaByKey,
@@ -824,12 +1017,57 @@ export function usePanelController() {
       if (!payload.endpointsFile.endpointCount) {
         return;
       }
+
+      let exportMessage: string | null = null;
+      const providerLabel = getProviderLabel(aiSettings.provider);
+      const apiKey = getAPIKeyForProvider(aiSettings, aiSettings.provider);
+      const shouldRunAI = aiSettings.enabled && apiKey.length > 0;
+
+      if (aiSettings.enabled && !apiKey) {
+        exportMessage = `AI enrichment is enabled, but no ${providerLabel} API key is set. Exported without enrichment.`;
+      }
+
+      if (shouldRunAI) {
+        const aiInput = buildAIEnrichmentInput(payload);
+        setAIProgress({
+          completed: 0,
+          total: aiInput.length,
+          message: `Enriching 0/${aiInput.length} endpoints...`,
+        });
+
+        try {
+          const { enrichEndpointsWithAI } = await import('./ai-enrichment');
+          const enrichment = await enrichEndpointsWithAI({
+            settings: aiSettings,
+            endpoints: aiInput,
+            onProgress: (progress) => {
+              const completed = Math.min(progress.completed, progress.total);
+              setAIProgress({
+                completed,
+                total: progress.total,
+                message: `Enriching ${completed}/${progress.total} endpoints...`,
+              });
+            },
+          });
+
+          payload = applyAIEnrichmentToBundle({
+            bundle: payload,
+            enrichment,
+          });
+        } catch (error) {
+          exportMessage = `AI enrichment failed (${providerLabel}): ${error instanceof Error ? error.message : String(error)}. Exported without enrichment.`;
+        }
+      }
+
       await downloadStructuredBundleZip(payload);
-      setStatusOverride(null);
+      setStatusOverride(exportMessage);
     } catch (error) {
       setStatusOverride(`Bundle export failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsExportingMap(false);
+      setAIProgress(null);
     }
-  }, [displayEntries.length, groups, checkedEndpointKeys, mergedSchemaByKey]);
+  }, [displayEntries.length, isExportingMap, groups, checkedEndpointKeys, mergedSchemaByKey, aiSettings]);
 
   return {
     isSnapshot,
@@ -846,11 +1084,18 @@ export function usePanelController() {
     snapshotCookieDomain,
     snapshotCookieError,
     isCapturingCookies,
+    isExportingMap,
     statusOverride,
+    aiSettings,
+    isAISettingsLoaded,
+    aiProgress,
     checkedCount,
     setSelectedEndpointKey,
     setCheckedEndpointKeys,
     setCollapsedSections,
+    setAIProvider,
+    setAIEnrichmentEnabled,
+    setAIApiKeyForProvider,
     selectAll,
     selectNone,
     toggleSnapshot,

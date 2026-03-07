@@ -8,7 +8,7 @@ export default defineConfig({
     short_name: 'Prism',
     version: '0.1.0',
     description: 'Prism Chrome DevTools API mapping extension',
-    permissions: ['cookies', 'activeTab'],
+    permissions: ['cookies', 'activeTab', 'storage'],
     host_permissions: ['<all_urls>'],
   },
 });
