@@ -4,6 +4,7 @@
   var elements = {
     snapshotButton: document.getElementById("snapshot-toggle"),
     exportButton: document.getElementById("snapshot-export"),
+    mapExportButton: document.getElementById("map-export"),
     liveIndicator: document.getElementById("live-indicator"),
     requestCount: document.getElementById("request-count"),
     endpointCount: document.getElementById("endpoint-count"),
@@ -374,6 +375,10 @@
     if (elements.exportButton) {
       elements.exportButton.disabled =
         !state.isSnapshot || state.isCapturingCookies;
+    }
+
+    if (elements.mapExportButton) {
+      elements.mapExportButton.disabled = groups.length === 0;
     }
 
     if (state.isSnapshot) {
@@ -1215,6 +1220,185 @@
     }
   }
 
+  // ── API Map export ───────────────────────────────────────
+
+  function serializeHeaderForMap(field) {
+    var entry = {
+      name: field.name,
+      type: field.valueType || "unknown",
+    };
+    if (field.optional) {
+      entry.optional = true;
+    }
+    if (field.isAuth) {
+      entry.authentication = true;
+    }
+    return entry;
+  }
+
+  function serializeSchemaForMap(schema) {
+    if (!schema) {
+      return null;
+    }
+
+    if (schema.type === "mixed" && Array.isArray(schema.variants)) {
+      return { type: "mixed", variants: schema.variants };
+    }
+
+    if (schema.type === "array") {
+      var arr = { type: "array" };
+      if (schema.items) {
+        arr.items = serializeSchemaForMap(schema.items);
+      }
+      return arr;
+    }
+
+    if (schema.type === "object" && schema.fields) {
+      var fields = {};
+      var keys = Object.keys(schema.fields);
+      for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        var child = schema.fields[key];
+        var serialized = serializeSchemaForMap(child);
+        if (child && child.optional) {
+          serialized.optional = true;
+        }
+        fields[key] = serialized;
+      }
+      return { type: "object", fields: fields };
+    }
+
+    return { type: schema.type || "unknown" };
+  }
+
+  function serializeBodyForMap(bodySchema) {
+    if (!bodySchema) {
+      return null;
+    }
+
+    var entry = {
+      contentType: bodySchema.contentType || "unknown",
+    };
+
+    if (bodySchema.schema) {
+      entry.schema = serializeSchemaForMap(bodySchema.schema);
+    }
+
+    return entry;
+  }
+
+  function buildMapExportPayload() {
+    var entries = getDisplayEntries();
+    var groups = sortGroups(getEndpointGroups(entries));
+    var endpoints = [];
+
+    for (var i = 0; i < groups.length; i++) {
+      var group = groups[i];
+      var mergedSchema = getMergedEndpointSchema(group);
+      var method = group.method || "GET";
+      var url = group.normalizedUrl || group.endpointKey;
+
+      var endpoint = {
+        method: method,
+        url: url,
+        observations: group.entries.length,
+      };
+
+      if (mergedSchema) {
+        // Auth headers
+        var authHeaders = [];
+        var reqFields =
+          mergedSchema.request &&
+          mergedSchema.request.headers &&
+          Array.isArray(mergedSchema.request.headers.fields)
+            ? mergedSchema.request.headers.fields
+            : [];
+        for (var a = 0; a < reqFields.length; a++) {
+          if (reqFields[a].isAuth) {
+            authHeaders.push({
+              header: reqFields[a].name,
+              type: reqFields[a].valueType || "string",
+            });
+          }
+        }
+        if (authHeaders.length > 0) {
+          endpoint.authentication = authHeaders;
+        }
+
+        // Request
+        var reqHeaders = [];
+        for (var r = 0; r < reqFields.length; r++) {
+          reqHeaders.push(serializeHeaderForMap(reqFields[r]));
+        }
+
+        endpoint.request = {
+          headers: reqHeaders.length > 0 ? reqHeaders : null,
+          body: serializeBodyForMap(mergedSchema.request.body),
+        };
+
+        // Response
+        var resFields =
+          mergedSchema.response &&
+          mergedSchema.response.headers &&
+          Array.isArray(mergedSchema.response.headers.fields)
+            ? mergedSchema.response.headers.fields
+            : [];
+        var resHeaders = [];
+        for (var s = 0; s < resFields.length; s++) {
+          resHeaders.push(serializeHeaderForMap(resFields[s]));
+        }
+
+        endpoint.response = {
+          headers: resHeaders.length > 0 ? resHeaders : null,
+          body: serializeBodyForMap(mergedSchema.response.body),
+        };
+      }
+
+      endpoints.push(endpoint);
+    }
+
+    return {
+      format: "gladium-api-map-v1",
+      exportedAt: new Date().toISOString(),
+      endpointCount: endpoints.length,
+      endpoints: endpoints,
+    };
+  }
+
+  function buildMapFilename() {
+    var date = new Date();
+    var yyyy = date.getFullYear();
+    var mm = formatNumberForFilename(date.getMonth() + 1);
+    var dd = formatNumberForFilename(date.getDate());
+    var hh = formatNumberForFilename(date.getHours());
+    var min = formatNumberForFilename(date.getMinutes());
+    var ss = formatNumberForFilename(date.getSeconds());
+
+    return (
+      "gladium-api-map-" + yyyy + mm + dd + "-" + hh + min + ss + ".json"
+    );
+  }
+
+  function onMapExportClick() {
+    var entries = getDisplayEntries();
+    if (!entries.length) {
+      return;
+    }
+
+    var payload = buildMapExportPayload();
+    var json = JSON.stringify(payload, null, 2);
+    var fileName = buildMapFilename();
+
+    try {
+      downloadTextFile(fileName, json);
+    } catch (error) {
+      var errorMessage =
+        error instanceof Error ? error.message : String(error);
+      elements.liveIndicator.textContent =
+        "Map export failed: " + errorMessage;
+    }
+  }
+
   // ── Main render ──────────────────────────────────────────
 
   function render() {
@@ -1297,6 +1481,10 @@
 
     if (elements.exportButton) {
       elements.exportButton.addEventListener("click", onExportSnapshotClick);
+    }
+
+    if (elements.mapExportButton) {
+      elements.mapExportButton.addEventListener("click", onMapExportClick);
     }
 
     if (!globalScope.GladiumRequestRecorder) {
