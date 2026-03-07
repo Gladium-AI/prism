@@ -190,6 +190,15 @@
     return normalizer.endpointKey(request.method, request.url);
   }
 
+  function getEntrySchema(entry) {
+    const inferrer = globalScope.GladiumSchemaInferrer;
+    if (!inferrer || typeof inferrer.inferSchema !== "function") {
+      return null;
+    }
+
+    return inferrer.inferSchema(entry);
+  }
+
   function serializeRequestForExport(entry) {
     const request = entry && entry.request ? entry.request : {};
     const response = entry && entry.response ? entry.response : {};
@@ -199,6 +208,7 @@
       id: entry && typeof entry.id === "number" ? entry.id : null,
       capturedAt: entry && typeof entry.capturedAt === "string" ? entry.capturedAt : null,
       endpointKey: getEndpointKey(entry),
+      schema: getEntrySchema(entry),
       score: serializeScore(entry ? entry.score : null),
       request: {
         url: typeof request.url === "string" ? request.url : null,
@@ -806,6 +816,11 @@
         ? selectedEntry.timing.durationMs
         : null;
 
+    const entrySchema = getEntrySchema(selectedEntry);
+    const schemaJson = entrySchema
+      ? JSON.stringify(entrySchema, null, 2)
+      : "(schema unavailable)";
+
     elements.requestDetails.innerHTML = [
       '<section class="detail-summary">',
       `  <p class="summary-url">${escapeHtml(requestUrl)}</p>`,
@@ -834,6 +849,10 @@
       '<section class="detail-section">',
       "  <h3>Response Body</h3>",
       `  <pre>${escapeHtml(responseBody)}</pre>`,
+      "</section>",
+      '<section class="detail-section">',
+      "  <h3>Inferred Schema</h3>",
+      `  <pre>${escapeHtml(schemaJson)}</pre>`,
       "</section>",
     ].join("\n");
   }
