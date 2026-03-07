@@ -1,3 +1,4 @@
+import { Badge } from '@/src/design-system';
 import { formatCookieFlags } from '../panel-utils';
 
 interface CookieSectionProps {
@@ -21,13 +22,13 @@ export function CookieSection({
     <section className="detail-block cookie-block" aria-label="Snapshot cookies">
       <header className="pane-header">
         <h2>Snapshot Cookies</h2>
-        <span className="count-pill">{cookieCount}</span>
+        <Badge variant="count" uppercase={false}>
+          {cookieCount}
+        </Badge>
       </header>
       <div className="cookie-list">
         {!isSnapshot ? (
-          <div className="empty-state">
-            Take a snapshot to capture cookies for the active tab domain.
-          </div>
+          <div className="empty-state">Take a snapshot to capture cookies for the active tab domain.</div>
         ) : isCapturingCookies ? (
           <div className="empty-state">Capturing cookies for the active tab domain...</div>
         ) : snapshotCookieError ? (

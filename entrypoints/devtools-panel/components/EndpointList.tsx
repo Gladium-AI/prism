@@ -1,5 +1,12 @@
+import { Badge, Button, type BadgeVariant, Tooltip } from '@/src/design-system';
 import type { SchemaObservation } from '@/core';
-import { classifyGroups, getCompactPath, getDisplayMethod, getMethodClass, type PanelEndpointGroup } from '../panel-utils';
+import {
+  classifyGroups,
+  getCompactPath,
+  getDisplayMethod,
+  getMethodClass,
+  type PanelEndpointGroup,
+} from '../panel-utils';
 
 interface EndpointListProps {
   groups: PanelEndpointGroup[];
@@ -15,6 +22,12 @@ interface EndpointListProps {
   onSelectNone(): void;
 }
 
+const badgeVariantByMethodClass: Record<'method-get' | 'method-write' | 'method-other', BadgeVariant> = {
+  'method-get': 'methodGet',
+  'method-write': 'methodWrite',
+  'method-other': 'methodOther',
+};
+
 function GroupHeader({
   label,
   count,
@@ -27,11 +40,15 @@ function GroupHeader({
   onClick(): void;
 }) {
   return (
-    <div className="group-header" onClick={onClick}>
-      <span className="group-toggle">{collapsed ? '▶' : '▼'}</span>
+    <button className="group-header" type="button" onClick={onClick}>
+      <span className="group-toggle" aria-hidden="true">
+        {collapsed ? '▶' : '▼'}
+      </span>
       <span className="group-label">{label}</span>
-      <span className="group-count">{count}</span>
-    </div>
+      <Badge className="group-count" variant="counter" uppercase={false}>
+        {count}
+      </Badge>
+    </button>
   );
 }
 
@@ -55,6 +72,7 @@ function EndpointRow({
   const observationCount = group.entries.length;
   const isSelected = selectedEndpointKey === group.endpointKey;
   const isChecked = checkedEndpointKeys[group.endpointKey] === true;
+  const methodClass = getMethodClass(method);
   const hasAuth =
     mergedSchema?.request?.headers?.fields?.some((field) => field.isAuth === true) ?? false;
 
@@ -75,16 +93,23 @@ function EndpointRow({
           onClick={(event) => event.stopPropagation()}
           onChange={(event) => onToggleChecked(group.endpointKey, event.target.checked)}
         />
-        <span className={`method-chip ${getMethodClass(method)}`}>{method}</span>
+
+        <Badge variant={badgeVariantByMethodClass[methodClass]}>{method}</Badge>
+
         <span className="endpoint-path" title={group.endpointKey}>
           {path}
           {hasAuth ? (
-            <span className="auth-indicator" title="Auth headers detected on this endpoint">
-              🔑
-            </span>
+            <Tooltip label="Auth headers detected on this endpoint">
+              <span className="auth-indicator" aria-label="Auth headers detected on this endpoint">
+                🔑
+              </span>
+            </Tooltip>
           ) : null}
         </span>
-        <span className="obs-chip">{observationCount}</span>
+
+        <Badge className="obs-chip" variant="counter" uppercase={false}>
+          {observationCount}
+        </Badge>
       </div>
     </div>
   );
@@ -109,17 +134,25 @@ export function EndpointList({
     <article className="pane list-pane" aria-label="Endpoints">
       <header className="pane-header">
         <h2>Endpoints</h2>
-        <span className="count-pill">{groups.length}</span>
-        <span className="count-pill request-pill" title="Total observations">
+        <Badge className="count-pill" variant="count" uppercase={false}>
+          {groups.length}
+        </Badge>
+        <Badge className="request-pill" variant="info" uppercase={false} title="Total observations">
           {requestCount} observations
-        </span>
+        </Badge>
         <span className="selection-controls">
-          <button className="select-control" type="button" title="Select all" onClick={onSelectAll}>
+          <Button className="select-control" variant="ghost" size="xs" title="Select all" onClick={onSelectAll}>
             All
-          </button>
-          <button className="select-control" type="button" title="Deselect all" onClick={onSelectNone}>
+          </Button>
+          <Button
+            className="select-control"
+            variant="ghost"
+            size="xs"
+            title="Deselect all"
+            onClick={onSelectNone}
+          >
             None
-          </button>
+          </Button>
         </span>
       </header>
 

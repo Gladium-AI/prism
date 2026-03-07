@@ -1,3 +1,4 @@
+import { Badge, type BadgeVariant } from '@/src/design-system';
 import type { SchemaObservation } from '@/core';
 import {
   buildHeaderValuesMap,
@@ -8,12 +9,14 @@ import {
 } from '../panel-utils';
 import { BodySchemaView, HeadersSchemaTable } from './SchemaView';
 
+const methodBadgeVariantByClass: Record<'method-get' | 'method-write' | 'method-other', BadgeVariant> = {
+  'method-get': 'methodGet',
+  'method-write': 'methodWrite',
+  'method-other': 'methodOther',
+};
+
 function EmptyDetailsState() {
-  return (
-    <div className="empty-state">
-      Select an endpoint to inspect its schema, headers, and auth.
-    </div>
-  );
+  return <div className="empty-state">Select an endpoint to inspect its schema, headers, and auth.</div>;
 }
 
 export function EndpointDetails({
@@ -39,8 +42,9 @@ export function EndpointDetails({
   const method = getDisplayMethod(group.method);
   const observationCount = group.entries.length;
   const displayUrl = group.normalizedUrl || group.endpointKey;
-  const apiTypeLabel = isGraphQLGroup(group) ? 'GraphQL' : 'REST';
-  const apiTypeClass = isGraphQLGroup(group) ? 'meta-chip-graphql' : 'meta-chip-rest';
+  const isGraphQL = isGraphQLGroup(group);
+  const apiTypeLabel = isGraphQL ? 'GraphQL' : 'REST';
+  const apiTypeVariant: BadgeVariant = isGraphQL ? 'apiGraphql' : 'apiRest';
 
   const requestHeaderValues = buildHeaderValuesMap(group.entries, 'request');
   const responseHeaderValues = buildHeaderValuesMap(group.entries, 'response');
@@ -63,11 +67,13 @@ export function EndpointDetails({
       <div className="endpoint-details">
         <section className="detail-summary">
           <div className="summary-meta">
-            <span className={`meta-chip ${getMethodClass(method)}`}>{method}</span>
-            <span className="meta-chip">
+            <Badge variant={methodBadgeVariantByClass[getMethodClass(method)]}>{method}</Badge>
+            <Badge variant="count" uppercase={false}>
               {observationCount} observation{observationCount !== 1 ? 's' : ''}
-            </span>
-            <span className={`meta-chip ${apiTypeClass}`}>{apiTypeLabel}</span>
+            </Badge>
+            <Badge variant={apiTypeVariant} uppercase={false}>
+              {apiTypeLabel}
+            </Badge>
           </div>
           <p className="summary-url">{displayUrl}</p>
         </section>

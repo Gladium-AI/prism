@@ -1,3 +1,4 @@
+import { Button, Toggle, Tooltip } from '@/src/design-system';
 import { useEffect, useRef, useState } from 'react';
 import { formatSnapshotTime } from '../panel-utils';
 
@@ -51,49 +52,59 @@ export function PanelToolbar({
     onExportMap();
   };
 
+  const modeToggle = (
+    <Toggle
+      checked={isSnapshot}
+      checkedLabel="Frozen"
+      uncheckedLabel="Live"
+      checkedTone="danger"
+      uncheckedTone="success"
+      onClick={onSnapshotToggle}
+    />
+  );
+
   return (
     <header className="panel-toolbar">
       <div className="toolbar-actions">
-        <button
-          className={`mode-toggle${isSnapshot ? ' is-frozen' : ' is-live'}`}
-          type="button"
-          onClick={onSnapshotToggle}
-          title={isSnapshot && snapshotSuffix ? `Frozen at ${snapshotSuffix}` : undefined}
-        >
-          <span className="mode-indicator" aria-hidden="true"></span>
-          {isSnapshot ? 'Frozen' : 'Live'}
-        </button>
+        {isSnapshot && snapshotSuffix ? (
+          <Tooltip label={`Frozen at ${snapshotSuffix}`}>{modeToggle}</Tooltip>
+        ) : (
+          modeToggle
+        )}
 
         <div className="export-menu" ref={menuRef}>
-          <button
+          <Button
             className="export-button"
-            type="button"
+            variant="secondary"
+            size="sm"
             onClick={() => setMenuOpen((previous) => !previous)}
             aria-haspopup="menu"
             aria-expanded={menuOpen ? 'true' : 'false'}
           >
             Export
-          </button>
+          </Button>
           {menuOpen ? (
             <div className="export-menu-panel" role="menu">
-              <button
+              <Button
                 className="export-menu-item"
-                type="button"
+                variant="menu"
+                size="sm"
                 role="menuitem"
                 disabled={!canExportSnapshot || isCapturingCookies}
                 onClick={handleExportSnapshot}
               >
                 Snapshot JSON
-              </button>
-              <button
+              </Button>
+              <Button
                 className="export-menu-item"
-                type="button"
+                variant="menu"
+                size="sm"
                 role="menuitem"
                 disabled={!canExportMap}
                 onClick={handleExportMap}
               >
                 Endpoint Map JSON
-              </button>
+              </Button>
             </div>
           ) : null}
         </div>
