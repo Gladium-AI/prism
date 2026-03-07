@@ -4,4 +4,5 @@ export * from './endpoint-deduplication';
 export * from './schema-inferrer';
 export * from './schema-merger';
 export * from './graphql-operation';
+export * from './rest-endpoint';
 export * from './request-recorder';

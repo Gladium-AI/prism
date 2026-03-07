@@ -5,13 +5,17 @@ import {
   inferSchema,
   mergeEndpointGroup,
   mergeGraphQLOperationsFromEntries,
+  mergeRestEndpointGroup,
   type BodySchema,
   type GraphQLSelectionField,
   type HeaderField,
   type JsonSchema,
   type MergedGraphQLOperation,
+  type MergedRestEndpoint,
   type RecordedNetworkEntry,
   type RequestRecorder,
+  type RestPathParameter,
+  type RestQueryParameter,
   type SchemaObservation,
 } from '@/core';
 import {
@@ -74,6 +78,7 @@ interface EndpointSummary {
   maxScore: number;
   mergedSchema: SchemaObservation | null;
   graphql: MergedGraphQLOperation | null;
+  rest: MergedRestEndpoint | null;
   requestIds: Array<number | null>;
 }
 
@@ -138,6 +143,41 @@ interface BundleGraphQLSelectionField {
   fields?: BundleGraphQLSelectionField[];
 }
 
+interface BundleRestPathParameter {
+  name: string;
+  placeholder: string;
+  type: string;
+  role: string;
+  optional?: boolean;
+  seenCount?: number;
+}
+
+interface BundleRestQueryParameter {
+  name: string;
+  type: string;
+  optional?: boolean;
+  seenCount?: number;
+}
+
+interface BundleRestResponseStatusRef {
+  statusCode: string;
+  responseRef: string;
+  observations: number;
+}
+
+interface BundleRestOperationType {
+  pathTemplate: string | null;
+  pathParameters: BundleRestPathParameter[] | null;
+  queryParameters: BundleRestQueryParameter[] | null;
+  requestHeaders: {
+    custom: BundleHeader[] | null;
+    standard: BundleHeader[] | null;
+  };
+  requestBody: BundlePayloadSchema | null;
+  statusCodes: string[];
+  responsesByStatus: BundleRestResponseStatusRef[];
+}
+
 interface BundleEndpoint {
   endpointKey: string;
   method: string;
@@ -151,6 +191,7 @@ interface BundleEndpoint {
   };
   responseRef: string;
   graphql?: BundleGraphQLOperationType;
+  rest?: BundleRestOperationType;
   ai?: BundleEndpointAIContext;
 }
 
@@ -480,6 +521,69 @@ function serializeGraphQLOperationForBundle(
   };
 }
 
+function serializeRestPathParameterForBundle(
+  parameter: RestPathParameter,
+): BundleRestPathParameter {
+  return {
+    name: parameter.name,
+    placeholder: parameter.placeholder,
+    type: parameter.type,
+    role: parameter.role,
+    ...(parameter.optional ? { optional: true } : {}),
+    ...(typeof parameter.seenCount === 'number' ? { seenCount: parameter.seenCount } : {}),
+  };
+}
+
+function serializeRestQueryParameterForBundle(
+  parameter: RestQueryParameter,
+): BundleRestQueryParameter {
+  return {
+    name: parameter.name,
+    type: parameter.type,
+    ...(parameter.optional ? { optional: true } : {}),
+    ...(typeof parameter.seenCount === 'number' ? { seenCount: parameter.seenCount } : {}),
+  };
+}
+
+function serializeResponseSideForBundle(response: SchemaObservation['response']): ResponseSchemaEntry {
+  const responseFields = response.headers.fields ?? [];
+  return {
+    headers: responseFields.length > 0 ? responseFields.map(serializeHeaderForBundle) : null,
+    payload: serializePayloadForBundle(response.body ?? null),
+  };
+}
+
+function getRestResponseRef(method: string, url: string, statusLabel: string): string {
+  return `${method} ${url} -> ${statusLabel}`;
+}
+
+function getStatusPriority(statusCode: string): number {
+  if (statusCode === '200') {
+    return 0;
+  }
+  if (statusCode === '201') {
+    return 1;
+  }
+  if (statusCode === '204') {
+    return 2;
+  }
+
+  const numericStatus = Number(statusCode);
+  if (Number.isFinite(numericStatus) && numericStatus >= 200 && numericStatus < 300) {
+    return 3;
+  }
+  if (Number.isFinite(numericStatus) && numericStatus >= 300 && numericStatus < 400) {
+    return 4;
+  }
+  if (Number.isFinite(numericStatus) && numericStatus >= 400 && numericStatus < 500) {
+    return 5;
+  }
+  if (Number.isFinite(numericStatus) && numericStatus >= 500) {
+    return 6;
+  }
+  return 7;
+}
+
 function normalizeForStableStringify(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => normalizeForStableStringify(item));
@@ -528,10 +632,14 @@ function buildPrismMapMarkdown(args: {
 }): string {
   const sampleEndpoint = args.endpointsFile.endpoints[0] ?? null;
   const sampleGraphQLEndpoint = args.endpointsFile.endpoints.find((endpoint) => endpoint.apiType === 'graphql') ?? null;
+  const sampleRestEndpoint = args.endpointsFile.endpoints.find((endpoint) => endpoint.apiType === 'rest') ?? null;
   const fallbackRef = Object.keys(args.responsesFile.responses)[0] ?? 'response_0001';
   const sampleResponseRef = sampleEndpoint?.responseRef ?? fallbackRef;
   const sampleMethod = sampleEndpoint?.method ?? 'GET';
   const sampleUrl = sampleEndpoint?.url ?? 'https://api.example.com/v1/resource/{id}';
+  const sampleRestStatusRef = sampleRestEndpoint?.rest?.responsesByStatus[0] ?? null;
+  const sampleRestStatusCode = sampleRestStatusRef?.statusCode ?? '200';
+  const sampleRestResponseRef = sampleRestStatusRef?.responseRef ?? sampleResponseRef;
   const sampleGraphQLOperationName =
     sampleGraphQLEndpoint?.graphql?.operationName ?? sampleGraphQLEndpoint?.endpointKey ?? 'GetExampleQuery';
   const sampleGraphQLOperationType = sampleGraphQLEndpoint?.graphql?.operationType ?? 'query';
@@ -547,9 +655,9 @@ function buildPrismMapMarkdown(args: {
     'This bundle is designed for LLMs and coding agents. It separates endpoint indexing from response schemas so tools only load the minimum required context.',
     '',
     '## File Roles',
-    '- `endpoints.json`: Lightweight endpoint index. REST entries are keyed by method + normalized URL. GraphQL entries are keyed by operation name and include a `graphql` section (operation type, variables schema, selection set, raw queries).',
+    '- `endpoints.json`: Lightweight endpoint index. REST entries include `rest.pathTemplate`, path/query parameter schemas, request decomposition, and `rest.responsesByStatus` refs. GraphQL entries are keyed by operation name and include a `graphql` section (operation type, variables schema, selection set, raw queries).',
     '- If AI enrichment is enabled, each endpoint includes an `ai` section with plain-language description, auth explanation, semantic group, and response field annotations.',
-    '- `responses.json`: Response schema library keyed by `responseRef`. Each key contains response headers and payload schema.',
+    '- `responses.json`: Response schema library keyed by `responseRef`. REST refs are endpoint + status (`METHOD URL -> STATUS`); GraphQL refs may use shared synthetic keys.',
     '- `PRISM_MAP.md`: Instructions for navigating and using this bundle.',
     '',
     ...(semanticGroups.length
@@ -561,15 +669,18 @@ function buildPrismMapMarkdown(args: {
       : []),
     '## Cross-Reference Workflow',
     '1. Open `endpoints.json` and choose an endpoint by key. REST keys are method + URL; GraphQL keys are operation names.',
-    `2. Read its \`responseRef\`. Example endpoint: \`${sampleMethod} ${sampleUrl}\` uses \`${sampleResponseRef}\`.`,
-    `3. Open \`responses.json\` and load only \`responses["${sampleResponseRef}"]\` for the response schema.`,
-    '4. Combine endpoint request schema + referenced response schema to generate a scraper or integration.',
+    `2. For REST, read \`rest.responsesByStatus\` and pick a status ref (example: status \`${sampleRestStatusCode}\` uses \`${sampleRestResponseRef}\`).`,
+    `3. For GraphQL (or fallback), use \`responseRef\` (example: \`${sampleResponseRef}\`).`,
+    `4. Open \`responses.json\` and load only the referenced schema key(s).`,
+    '5. Combine endpoint request schema + referenced response schema(s) to generate a scraper or integration.',
     '',
     '## Schema Reading Rules',
     '- Header schemas use `{ "name", "type" }`; `optional: true` means the field did not appear in every observation.',
     '- Payload schemas are recursive and type-based: `object` uses `fields`, `array` uses `items`.',
     '- Union types are represented as `{ "type": "mixed", "variants": ["string", "number"] }`.',
     '- Optional payload fields are marked with `optional: true` on that field node.',
+    '- REST path/query parameters include `optional` + `seenCount` across observations.',
+    '- REST response schemas are segmented by observed status code.',
     '- No raw request/response values are exported in these files.',
     '- GraphQL entries include a structured `graphql.selectionSet` tree with per-field optionality/observation counts.',
     '',
@@ -581,8 +692,8 @@ function buildPrismMapMarkdown(args: {
     '',
     '## Example Usage',
     `To build a scraper for \`${sampleMethod} ${sampleUrl}\`:`,
-    `1. In \`endpoints.json\`, locate that endpoint and copy its request schema plus \`responseRef: ${sampleResponseRef}\`.`,
-    `2. In \`responses.json\`, resolve \`${sampleResponseRef}\` and apply its headers/payload schema in your parser.`,
+    `1. In \`endpoints.json\`, locate that endpoint and copy request schema details plus status refs (for REST) or \`responseRef: ${sampleResponseRef}\` (for GraphQL).`,
+    `2. In \`responses.json\`, resolve the relevant ref(s) such as \`${sampleRestResponseRef}\`.`,
     '3. Generate request code using endpoint auth headers and request payload fields; generate parsing code from the response schema.',
   ];
 
@@ -614,13 +725,30 @@ function buildGraphQLOperationSummaryByKey(
   return result;
 }
 
+function buildRestEndpointSummaryByKey(
+  groups: readonly PanelEndpointGroup[],
+  graphQLOperationByKey: Record<string, MergedGraphQLOperation | null>,
+): Record<string, MergedRestEndpoint | null> {
+  const result: Record<string, MergedRestEndpoint | null> = {};
+  for (const group of groups) {
+    if (graphQLOperationByKey[group.endpointKey]) {
+      result[group.endpointKey] = null;
+      continue;
+    }
+    result[group.endpointKey] = mergeRestEndpointGroup(group);
+  }
+  return result;
+}
+
 function buildEndpointsSummary(entries: readonly RecordedNetworkEntry[]): EndpointSummary[] {
   const groups = deduplicateEntries(entries);
   const graphQLOperationByKey = buildGraphQLOperationSummaryByKey(groups);
+  const restEndpointByKey = buildRestEndpointSummaryByKey(groups, graphQLOperationByKey);
 
   return groups.map((group) => {
     const maxScore = group.entries.reduce((max, entry) => Math.max(max, getScore(entry)), 0);
     const mergedGraphQL = graphQLOperationByKey[group.endpointKey];
+    const mergedRest = restEndpointByKey[group.endpointKey];
 
     return {
       endpointKey: group.endpointKey,
@@ -631,6 +759,7 @@ function buildEndpointsSummary(entries: readonly RecordedNetworkEntry[]): Endpoi
       maxScore,
       mergedSchema: mergeEndpointGroup(group)?.schema ?? null,
       graphql: mergedGraphQL,
+      rest: mergedRest,
       requestIds: group.entries.map((entry) => (typeof entry.id === 'number' ? entry.id : null)),
     };
   });
@@ -667,6 +796,7 @@ function buildStructuredBundlePayload(args: {
   checkedEndpointKeys: Record<string, boolean>;
   mergedSchemaByKey: Record<string, SchemaObservation | null>;
   graphQLOperationByKey: Record<string, MergedGraphQLOperation | null>;
+  restEndpointByKey: Record<string, MergedRestEndpoint | null>;
 }): StructuredBundlePayload {
   const exportedAt = new Date().toISOString();
   const endpoints: BundleEndpoint[] = [];
@@ -681,19 +811,17 @@ function buildStructuredBundlePayload(args: {
 
     const mergedSchema = args.mergedSchemaByKey[group.endpointKey];
     const graphQLOperation = args.graphQLOperationByKey[group.endpointKey];
+    const restEndpoint = args.restEndpointByKey[group.endpointKey];
     const method = group.method || 'GET';
     const url = group.normalizedUrl || group.endpointKey;
     const requestFields = mergedSchema?.request.headers.fields ?? [];
-    const responseFields = mergedSchema?.response.headers.fields ?? [];
     const authHeaders = requestFields
       .filter((field) => field.isAuth)
       .map((field) => ({ name: field.name, type: field.valueType || 'string' }));
 
-    const responseSchemaEntry: ResponseSchemaEntry = {
-      headers: responseFields.length > 0 ? responseFields.map(serializeHeaderForBundle) : null,
-      payload: serializePayloadForBundle(mergedSchema?.response.body ?? null),
-    };
-
+    const responseSchemaEntry = serializeResponseSideForBundle(
+      mergedSchema?.response ?? { headers: { fields: [] }, body: null },
+    );
     const responseSignature = getResponseSchemaSignature(responseSchemaEntry);
     let responseRef = responseRefBySignature.get(responseSignature);
     if (!responseRef) {
@@ -706,6 +834,53 @@ function buildStructuredBundlePayload(args: {
     const serializedGraphQLOperation = graphQLOperation
       ? serializeGraphQLOperationForBundle(graphQLOperation)
       : null;
+    let serializedRestOperation: BundleRestOperationType | null = null;
+
+    if (restEndpoint && !graphQLOperation) {
+      const statusRefs: BundleRestResponseStatusRef[] = [];
+
+      for (const statusSchema of restEndpoint.statusSchemas) {
+        const statusResponseRef = getRestResponseRef(method, url, statusSchema.statusLabel);
+        responses[statusResponseRef] = serializeResponseSideForBundle(statusSchema.response);
+        statusRefs.push({
+          statusCode: statusSchema.statusLabel,
+          responseRef: statusResponseRef,
+          observations: statusSchema.observationCount,
+        });
+      }
+
+      if (statusRefs.length > 0) {
+        const bestStatusRef = statusRefs
+          .slice()
+          .sort(
+            (left, right) =>
+              getStatusPriority(left.statusCode) - getStatusPriority(right.statusCode) ||
+              right.observations - left.observations,
+          )[0];
+        responseRef = bestStatusRef.responseRef;
+      }
+
+      serializedRestOperation = {
+        pathTemplate: restEndpoint.pathTemplate,
+        pathParameters: restEndpoint.pathParameters.length
+          ? restEndpoint.pathParameters.map(serializeRestPathParameterForBundle)
+          : null,
+        queryParameters: restEndpoint.queryParameters.length
+          ? restEndpoint.queryParameters.map(serializeRestQueryParameterForBundle)
+          : null,
+        requestHeaders: {
+          custom: restEndpoint.requestHeaders.custom.length
+            ? restEndpoint.requestHeaders.custom.map(serializeHeaderForBundle)
+            : null,
+          standard: restEndpoint.requestHeaders.standard.length
+            ? restEndpoint.requestHeaders.standard.map(serializeHeaderForBundle)
+            : null,
+        },
+        requestBody: serializePayloadForBundle(restEndpoint.requestBody),
+        statusCodes: restEndpoint.statusCodes,
+        responsesByStatus: statusRefs,
+      };
+    }
 
     endpoints.push({
       endpointKey: group.endpointKey,
@@ -720,6 +895,7 @@ function buildStructuredBundlePayload(args: {
       },
       responseRef,
       ...(serializedGraphQLOperation ? { graphql: serializedGraphQLOperation } : {}),
+      ...(serializedRestOperation ? { rest: serializedRestOperation } : {}),
     });
   }
 
@@ -886,6 +1062,10 @@ export function usePanelController() {
     return buildGraphQLOperationSummaryByKey(groups);
   }, [groups]);
 
+  const restEndpointByKey = useMemo<Record<string, MergedRestEndpoint | null>>(() => {
+    return buildRestEndpointSummaryByKey(groups, graphQLOperationByKey);
+  }, [groups, graphQLOperationByKey]);
+
   useEffect(() => {
     setCheckedEndpointKeys((previous) => {
       const validKeys = new Set(groups.map((group) => group.endpointKey));
@@ -933,6 +1113,7 @@ export function usePanelController() {
   const selectedGraphQLOperation = selectedGroup
     ? graphQLOperationByKey[selectedGroup.endpointKey] ?? null
     : null;
+  const selectedRestEndpoint = selectedGroup ? restEndpointByKey[selectedGroup.endpointKey] ?? null : null;
 
   const checkedCount = useMemo<number>(() => {
     return Object.values(checkedEndpointKeys).filter(Boolean).length;
@@ -1108,6 +1289,7 @@ export function usePanelController() {
         checkedEndpointKeys,
         mergedSchemaByKey,
         graphQLOperationByKey,
+        restEndpointByKey,
       });
       if (!payload.endpointsFile.endpointCount) {
         return;
@@ -1169,6 +1351,7 @@ export function usePanelController() {
     checkedEndpointKeys,
     mergedSchemaByKey,
     graphQLOperationByKey,
+    restEndpointByKey,
     aiSettings,
   ]);
 
@@ -1182,9 +1365,11 @@ export function usePanelController() {
     groups,
     mergedSchemaByKey,
     graphQLOperationByKey,
+    restEndpointByKey,
     selectedGroup,
     selectedMergedSchema,
     selectedGraphQLOperation,
+    selectedRestEndpoint,
     snapshotCookies,
     snapshotCookieDomain,
     snapshotCookieError,
