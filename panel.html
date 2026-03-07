@@ -11,7 +11,7 @@
       <header class="panel-toolbar">
         <div class="toolbar-title">
           <p class="eyebrow">Gladium AI</p>
-          <h1>Network Snapshot</h1>
+          <h1>API Map</h1>
         </div>
         <div class="toolbar-actions">
           <button id="snapshot-toggle" class="snapshot-button" type="button">
@@ -26,22 +26,22 @@
         </div>
       </header>
 
-      <section class="panel-grid" aria-label="Network requests">
-        <article class="pane list-pane" aria-label="Recorded requests list">
+      <section class="panel-grid" aria-label="API Map">
+        <article class="pane list-pane" aria-label="Endpoints">
           <header class="pane-header">
-            <h2>Captured Requests</h2>
-            <span id="request-count" class="count-pill">0</span>
-            <span id="endpoint-count" class="count-pill endpoint-pill" title="Unique endpoints">0 endpoints</span>
+            <h2>Endpoints</h2>
+            <span id="endpoint-count" class="count-pill">0</span>
+            <span id="request-count" class="count-pill request-pill" title="Total observations">0 obs</span>
           </header>
-          <div id="request-list" class="request-list" role="listbox" aria-label="Recorded requests"></div>
+          <div id="endpoint-list" class="endpoint-list" role="listbox" aria-label="Discovered endpoints"></div>
         </article>
 
-        <article class="pane detail-pane" aria-label="Snapshot details">
-          <section class="detail-block" aria-label="Request details">
+        <article class="pane detail-pane" aria-label="Endpoint details">
+          <section class="detail-block" aria-label="Endpoint details">
             <header class="pane-header">
-              <h2>Request Details</h2>
+              <h2>Endpoint Details</h2>
             </header>
-            <div id="request-details" class="request-details"></div>
+            <div id="endpoint-details" class="endpoint-details"></div>
           </section>
 
           <section class="detail-block cookie-block" aria-label="Snapshot cookies">
