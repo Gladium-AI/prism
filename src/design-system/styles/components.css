@@ -36,25 +36,25 @@
 }
 
 .ds-button--xs {
-  min-height: 1.5rem;
+  min-height: var(--ds-size-target-min);
   padding: var(--ds-space-1) var(--ds-space-2);
   border-radius: var(--ds-radius-full);
   font-size: var(--ds-font-size-2xs);
 }
 
 .ds-button--sm {
-  min-height: 2rem;
-  padding: var(--ds-space-2) var(--ds-space-3);
+  min-height: var(--ds-size-control-sm);
+  padding: var(--ds-space-1) var(--ds-space-3);
 }
 
 .ds-button--md {
-  min-height: 2.25rem;
-  padding: var(--ds-space-2) var(--ds-space-4);
+  min-height: var(--ds-size-control-md);
+  padding: var(--ds-space-2) var(--ds-space-3);
 }
 
 .ds-button--lg {
-  min-height: 2.5rem;
-  padding: var(--ds-space-3) var(--ds-space-5);
+  min-height: var(--ds-size-control-lg);
+  padding: var(--ds-space-2) var(--ds-space-4);
 }
 
 .ds-button--icon {
@@ -125,8 +125,8 @@
   background: transparent;
   color: var(--ds-color-text);
   border-radius: var(--ds-radius-md);
-  min-height: 2rem;
-  padding: var(--ds-space-2) var(--ds-space-3);
+  min-height: var(--ds-size-control-sm);
+  padding: var(--ds-space-1) var(--ds-space-3);
   font-size: var(--ds-font-size-xs);
 }
 
@@ -255,8 +255,8 @@
   border: 1px solid var(--ds-color-border);
   background: var(--ds-color-bg-soft);
   color: var(--ds-color-text-subtle);
-  min-height: 2rem;
-  padding: var(--ds-space-2) var(--ds-space-3);
+  min-height: var(--ds-size-control-sm);
+  padding: var(--ds-space-1) var(--ds-space-3);
   font-size: var(--ds-font-size-xs);
   font-weight: 700;
   letter-spacing: 0.07em;

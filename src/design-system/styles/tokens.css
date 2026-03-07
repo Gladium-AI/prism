@@ -117,6 +117,18 @@
   --ds-duration-fast: 120ms;
   --ds-duration-base: 180ms;
   --ds-ease-standard: ease;
+
+  /* Sizing and density tokens */
+  --ds-size-target-min: 1.5rem;
+  --ds-size-control-sm: 1.875rem;
+  --ds-size-control-md: 2rem;
+  --ds-size-control-lg: 2.25rem;
+
+  --ds-layout-gap: var(--ds-space-3);
+  --ds-layout-padding: var(--ds-space-3);
+  --ds-surface-padding: var(--ds-space-4);
+  --ds-panel-header-padding-y: var(--ds-space-3);
+  --ds-panel-header-padding-x: var(--ds-space-4);
 }
 
 * {
@@ -185,4 +197,18 @@ h6 {
 
 p {
   margin: 0;
+}
+
+@media (min-width: 1440px) {
+  :root {
+    --ds-size-control-sm: 1.75rem;
+    --ds-size-control-md: 1.875rem;
+    --ds-size-control-lg: 2.125rem;
+
+    --ds-layout-gap: var(--ds-space-2);
+    --ds-layout-padding: var(--ds-space-2);
+    --ds-surface-padding: var(--ds-space-3);
+    --ds-panel-header-padding-y: var(--ds-space-2);
+    --ds-panel-header-padding-x: var(--ds-space-3);
+  }
 }
