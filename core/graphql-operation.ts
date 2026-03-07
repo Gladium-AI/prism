@@ -34,6 +34,7 @@ export interface MergedGraphQLOperation {
 interface GraphQLRequestPayload {
   query: string | null;
   operationName: string | null;
+  queryId: string | null;
   variablesValue: unknown;
   hasVariables: boolean;
 }
@@ -61,6 +62,221 @@ function parseJsonSafely(value: string): unknown {
   }
 }
 
+function parseGraphQLInputValue(source: string): unknown | null {
+  class Cursor {
+    private index = 0;
+
+    constructor(private readonly input: string) {}
+
+    private charAt(offset = 0): string {
+      return this.input[this.index + offset] ?? '';
+    }
+
+    private consume(length = 1): void {
+      this.index += length;
+    }
+
+    private skipWhitespace(): void {
+      while (this.index < this.input.length && /\s/.test(this.charAt())) {
+        this.consume();
+      }
+    }
+
+    private readWhile(predicate: (char: string) => boolean): string {
+      let result = '';
+      while (this.index < this.input.length) {
+        const current = this.charAt();
+        if (!predicate(current)) {
+          break;
+        }
+        result += current;
+        this.consume();
+      }
+      return result;
+    }
+
+    private parseToken(): unknown {
+      const token = this.readWhile((char) => !/[,\]\)\}\s]/.test(char)).trim();
+      if (token.length === 0) {
+        return '';
+      }
+      if (token === 'true') {
+        return true;
+      }
+      if (token === 'false') {
+        return false;
+      }
+      if (token === 'null') {
+        return null;
+      }
+      if (/^-?\d+(\.\d+)?$/.test(token)) {
+        const parsedNumber = Number(token);
+        if (!Number.isNaN(parsedNumber)) {
+          return parsedNumber;
+        }
+      }
+      return token;
+    }
+
+    private parseQuotedString(): string {
+      const quote = this.charAt();
+      this.consume();
+      let result = '';
+      while (this.index < this.input.length) {
+        const current = this.charAt();
+        this.consume();
+
+        if (current === '\\') {
+          const escaped = this.charAt();
+          if (escaped) {
+            result += escaped;
+            this.consume();
+          }
+          continue;
+        }
+
+        if (current === quote) {
+          return result;
+        }
+        result += current;
+      }
+      return result;
+    }
+
+    private parseKey(): string | null {
+      this.skipWhitespace();
+      const key = this.readWhile((char) => !/[:,\]\)\}\s]/.test(char)).trim();
+      if (key.length === 0) {
+        return null;
+      }
+      return key;
+    }
+
+    private parseArray(closeChar: string): unknown[] | null {
+      const values: unknown[] = [];
+      this.consume();
+
+      while (this.index < this.input.length) {
+        this.skipWhitespace();
+        if (this.charAt() === closeChar) {
+          this.consume();
+          return values;
+        }
+
+        const value = this.parseValue();
+        if (value === undefined) {
+          return null;
+        }
+        values.push(value);
+
+        this.skipWhitespace();
+        if (this.charAt() === ',') {
+          this.consume();
+          continue;
+        }
+        if (this.charAt() === closeChar) {
+          this.consume();
+          return values;
+        }
+      }
+
+      return null;
+    }
+
+    private parseObject(closeChar: string): Record<string, unknown> | null {
+      const objectResult: Record<string, unknown> = {};
+      this.consume();
+
+      while (this.index < this.input.length) {
+        this.skipWhitespace();
+        if (this.charAt() === closeChar) {
+          this.consume();
+          return objectResult;
+        }
+
+        const key = this.parseKey();
+        if (!key) {
+          return null;
+        }
+
+        this.skipWhitespace();
+        if (this.charAt() !== ':') {
+          return null;
+        }
+        this.consume();
+
+        const value = this.parseValue();
+        if (value === undefined) {
+          return null;
+        }
+        objectResult[key] = value;
+
+        this.skipWhitespace();
+        if (this.charAt() === ',') {
+          this.consume();
+          continue;
+        }
+        if (this.charAt() === closeChar) {
+          this.consume();
+          return objectResult;
+        }
+      }
+
+      return null;
+    }
+
+    parseValue(): unknown | undefined {
+      this.skipWhitespace();
+      if (this.index >= this.input.length) {
+        return undefined;
+      }
+
+      if (this.input.slice(this.index, this.index + 5) === 'List(') {
+        this.consume(4);
+        return this.parseArray(')');
+      }
+
+      const current = this.charAt();
+      if (current === '(') {
+        return this.parseObject(')');
+      }
+      if (current === '{') {
+        return this.parseObject('}');
+      }
+      if (current === '[') {
+        return this.parseArray(']');
+      }
+      if (current === '"' || current === "'") {
+        return this.parseQuotedString();
+      }
+
+      return this.parseToken();
+    }
+
+    parseTopLevel(): unknown | null {
+      const parsed = this.parseValue();
+      if (parsed === undefined) {
+        return null;
+      }
+      this.skipWhitespace();
+      return this.index === this.input.length ? parsed : null;
+    }
+  }
+
+  const shouldParseAsGraphQLInput =
+    source.startsWith('(') ||
+    source.startsWith('{') ||
+    source.startsWith('[') ||
+    source.startsWith('List(') ||
+    (source.includes(':') && !source.includes('&') && !source.includes('='));
+  if (!shouldParseAsGraphQLInput) {
+    return null;
+  }
+
+  const parser = new Cursor(source);
+  return parser.parseTopLevel();
+}
+
 function parseVariablesValue(value: unknown): { hasVariables: boolean; variablesValue: unknown } {
   if (value === undefined || value === null) {
     return { hasVariables: false, variablesValue: null };
@@ -75,6 +291,10 @@ function parseVariablesValue(value: unknown): { hasVariables: boolean; variables
     if (parsed !== undefined) {
       return { hasVariables: true, variablesValue: parsed };
     }
+    const parsedGraphQLInput = parseGraphQLInputValue(trimmed);
+    if (parsedGraphQLInput !== null) {
+      return { hasVariables: true, variablesValue: parsedGraphQLInput };
+    }
     return { hasVariables: true, variablesValue: value };
   }
 
@@ -84,11 +304,15 @@ function parseVariablesValue(value: unknown): { hasVariables: boolean; variables
 function payloadFromRecord(record: Record<string, unknown>): GraphQLRequestPayload {
   const query = normalizeString(record.query);
   const operationName = normalizeString(record.operationName);
+  const persistedQuery = asRecord(asRecord(record.extensions)?.persistedQuery);
+  const queryId =
+    normalizeString(record.queryId) ?? normalizeString(record.id) ?? normalizeString(persistedQuery?.sha256Hash);
   const variables = parseVariablesValue(record.variables);
 
   return {
     query,
     operationName,
+    queryId,
     variablesValue: variables.variablesValue,
     hasVariables: variables.hasVariables,
   };
@@ -100,6 +324,7 @@ function payloadFromBody(body: string): GraphQLRequestPayload {
     return {
       query: null,
       operationName: null,
+      queryId: null,
       variablesValue: null,
       hasVariables: false,
     };
@@ -117,6 +342,7 @@ function payloadFromBody(body: string): GraphQLRequestPayload {
       return {
         query: null,
         operationName: null,
+        queryId: null,
         variablesValue: null,
         hasVariables: false,
       };
@@ -129,11 +355,18 @@ function payloadFromBody(body: string): GraphQLRequestPayload {
   }
 
   const bodyParams = new URLSearchParams(trimmed);
-  if (bodyParams.has('query') || bodyParams.has('operationName') || bodyParams.has('variables')) {
+  if (
+    bodyParams.has('query') ||
+    bodyParams.has('operationName') ||
+    bodyParams.has('variables') ||
+    bodyParams.has('queryId') ||
+    bodyParams.has('queryid')
+  ) {
     const variables = parseVariablesValue(bodyParams.get('variables'));
     return {
       query: normalizeString(bodyParams.get('query')),
       operationName: normalizeString(bodyParams.get('operationName')),
+      queryId: normalizeString(bodyParams.get('queryId') ?? bodyParams.get('queryid')),
       variablesValue: variables.variablesValue,
       hasVariables: variables.hasVariables,
     };
@@ -142,6 +375,7 @@ function payloadFromBody(body: string): GraphQLRequestPayload {
   return {
     query: trimmed,
     operationName: null,
+    queryId: null,
     variablesValue: null,
     hasVariables: false,
   };
@@ -152,6 +386,7 @@ function payloadFromUrl(url: string | null | undefined): GraphQLRequestPayload {
     return {
       query: null,
       operationName: null,
+      queryId: null,
       variablesValue: null,
       hasVariables: false,
     };
@@ -163,6 +398,7 @@ function payloadFromUrl(url: string | null | undefined): GraphQLRequestPayload {
     return {
       query: normalizeString(parsed.searchParams.get('query')),
       operationName: normalizeString(parsed.searchParams.get('operationName')),
+      queryId: normalizeString(parsed.searchParams.get('queryId') ?? parsed.searchParams.get('queryid')),
       variablesValue: variables.variablesValue,
       hasVariables: variables.hasVariables,
     };
@@ -170,6 +406,7 @@ function payloadFromUrl(url: string | null | undefined): GraphQLRequestPayload {
     return {
       query: null,
       operationName: null,
+      queryId: null,
       variablesValue: null,
       hasVariables: false,
     };
@@ -192,6 +429,7 @@ function combinePayload(primary: GraphQLRequestPayload, secondary: GraphQLReques
   return {
     query: primary.query ?? secondary.query,
     operationName: primary.operationName ?? secondary.operationName,
+    queryId: primary.queryId ?? secondary.queryId,
     hasVariables: primary.hasVariables || secondary.hasVariables,
     variablesValue: primary.hasVariables ? primary.variablesValue : secondary.variablesValue,
   };
@@ -204,6 +442,7 @@ function getPayloadFromRequest(request: RequestLike): GraphQLRequestPayload {
       : {
           query: null,
           operationName: null,
+          queryId: null,
           variablesValue: null,
           hasVariables: false,
         };
@@ -278,6 +517,30 @@ function extractOperationNameFromUrl(url: string | null | undefined): string | n
   }
 }
 
+function extractOperationNameFromQueryId(queryId: string | null | undefined): string | null {
+  const normalizedQueryId = normalizeOperationName(queryId);
+  if (!normalizedQueryId) {
+    return null;
+  }
+
+  if (!normalizedQueryId.includes('.')) {
+    return normalizedQueryId;
+  }
+
+  const segments = normalizedQueryId.split('.');
+  if (segments.length < 2) {
+    return normalizedQueryId;
+  }
+
+  const lastSegment = segments[segments.length - 1];
+  if (/^[0-9a-f]{8,}$/i.test(lastSegment) || /^[A-Za-z0-9_-]{24,}$/.test(lastSegment)) {
+    const withoutHash = segments.slice(0, -1).join('.');
+    return normalizeOperationName(withoutHash);
+  }
+
+  return normalizedQueryId;
+}
+
 function looksLikeGraphQLQuery(query: string | null): boolean {
   if (!query) {
     return false;
@@ -301,6 +564,10 @@ function hasGraphQLSignal(payload: GraphQLRequestPayload, url: string | null | u
   }
 
   if (payload.operationName !== null) {
+    return true;
+  }
+
+  if (payload.queryId !== null && (payload.hasVariables || payload.query !== null || isGraphQLPath(url))) {
     return true;
   }
 
@@ -484,12 +751,17 @@ function hashString(value: string): string {
 
 function buildOperationKey(args: {
   operationName: string | null;
+  queryId: string | null;
   operationType: GraphQLOperationType | 'unknown';
   query: string | null;
   url: string | null | undefined;
 }): string {
   if (args.operationName) {
     return args.operationName;
+  }
+
+  if (args.queryId) {
+    return args.queryId;
   }
 
   const typeLabel =
@@ -513,7 +785,9 @@ export function parseGraphQLOperation(
   }
 
   let operationType: GraphQLOperationType | 'unknown' = 'unknown';
-  let operationName = payload.operationName ?? extractOperationNameFromUrl(request.url);
+  const operationNameFromQueryId = extractOperationNameFromQueryId(payload.queryId);
+  let operationName =
+    payload.operationName ?? operationNameFromQueryId ?? extractOperationNameFromUrl(request.url);
   let selectionSet: GraphQLSelectionField[] | null = null;
 
   if (payload.query) {
@@ -529,11 +803,12 @@ export function parseGraphQLOperation(
     operationType = inferOperationTypeFromMethod(request.method);
   }
 
-  operationName = operationName ?? extractOperationNameFromUrl(request.url);
+  operationName = operationName ?? operationNameFromQueryId ?? extractOperationNameFromUrl(request.url);
 
   const variablesSchema = payload.hasVariables ? inferJsonSchema(payload.variablesValue) : null;
   const operationKey = buildOperationKey({
     operationName,
+    queryId: payload.queryId,
     operationType,
     query: payload.query,
     url: request.url,
