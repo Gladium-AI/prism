@@ -3,6 +3,17 @@ export interface HeaderLike {
   value?: unknown;
 }
 
+export interface CookieLike {
+  name: string;
+  value?: unknown;
+  domain?: string;
+  path?: string;
+  expires?: number | string | null;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: string | null;
+}
+
 export interface RequestLike {
   method?: string | null;
   url?: string | null;
@@ -126,12 +137,14 @@ export interface DevtoolsPostDataLike {
 
 export interface DevtoolsRequestLike extends RequestLike {
   postData?: DevtoolsPostDataLike | null;
+  cookies?: readonly CookieLike[] | null;
 }
 
 export interface DevtoolsResponseLike {
   status?: number;
   statusText?: string | null;
   headers?: readonly HeaderLike[] | null;
+  cookies?: readonly CookieLike[] | null;
   content?: {
     mimeType?: string;
   } | null;
@@ -168,6 +181,16 @@ export interface RecordedRequest {
   method: string | null;
   url: string | null;
   headers: HeaderLike[];
+  cookies: Array<{
+    name: string;
+    value: string;
+    domain: string | null;
+    path: string | null;
+    expires: string | null;
+    httpOnly: boolean | null;
+    secure: boolean | null;
+    sameSite: string | null;
+  }>;
   body: string | null;
 }
 
@@ -175,6 +198,16 @@ export interface RecordedResponse {
   status: number | null;
   statusText: string | null;
   headers: HeaderLike[];
+  cookies: Array<{
+    name: string;
+    value: string;
+    domain: string | null;
+    path: string | null;
+    expires: string | null;
+    httpOnly: boolean | null;
+    secure: boolean | null;
+    sameSite: string | null;
+  }>;
   contentType: string | null;
   body: string | null;
   encoding: string | null;

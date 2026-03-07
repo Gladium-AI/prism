@@ -166,11 +166,11 @@ export function PanelToolbar({
             aria-haspopup="dialog"
             aria-expanded={settingsOpen ? 'true' : 'false'}
           >
-            AI Settings
+            Settings
           </Button>
 
           {settingsOpen ? (
-            <section className="settings-menu-panel" role="dialog" aria-label="AI enrichment settings">
+            <section className="settings-menu-panel" role="dialog" aria-label="Panel settings">
               {!isAISettingsLoaded ? (
                 <p className="settings-loading">Loading AI settings...</p>
               ) : (
