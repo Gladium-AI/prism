@@ -62,7 +62,7 @@ interface EndpointSummary {
 }
 
 interface SnapshotExportPayload {
-  format: 'gladium-snapshot-v1';
+  format: 'prism-snapshot-v1';
   exportedAt: string;
   snapshot: SnapshotSummary;
   endpoints: EndpointSummary[];
@@ -112,7 +112,7 @@ interface MapEndpoint {
 }
 
 interface MapExportPayload {
-  format: 'gladium-api-map-v1';
+  format: 'prism-api-map-v1';
   exportedAt: string;
   endpointCount: number;
   endpoints: MapEndpoint[];
@@ -399,7 +399,7 @@ function buildSnapshotExportPayload(args: {
   const endpoints = buildEndpointsSummary(args.snapshotEntries);
 
   return {
-    format: 'gladium-snapshot-v1',
+    format: 'prism-snapshot-v1',
     exportedAt: new Date().toISOString(),
     snapshot: {
       capturedAt: getSnapshotTimestamp(args.snapshotTime),
@@ -460,7 +460,7 @@ function buildMapExportPayload(args: {
   }
 
   return {
-    format: 'gladium-api-map-v1',
+    format: 'prism-api-map-v1',
     exportedAt: new Date().toISOString(),
     endpointCount: endpoints.length,
     endpoints,

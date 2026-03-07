@@ -79,7 +79,7 @@ function EndpointRow({
         <span className="endpoint-path" title={group.endpointKey}>
           {path}
           {hasAuth ? (
-            <span className="auth-indicator" title="Uses authentication">
+            <span className="auth-indicator" title="Auth headers detected on this endpoint">
               🔑
             </span>
           ) : null}
@@ -111,7 +111,7 @@ export function EndpointList({
         <h2>Endpoints</h2>
         <span className="count-pill">{groups.length}</span>
         <span className="count-pill request-pill" title="Total observations">
-          {requestCount} obs
+          {requestCount} observations
         </span>
         <span className="selection-controls">
           <button className="select-control" type="button" title="Select all" onClick={onSelectAll}>

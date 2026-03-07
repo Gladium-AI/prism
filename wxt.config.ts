@@ -4,9 +4,10 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
-    name: 'Gladium AI Network Snapshot',
+    name: 'Prism',
+    short_name: 'Prism',
     version: '0.1.0',
-    description: 'Chrome DevTools Network Snapshot Extension',
+    description: 'Prism Chrome DevTools API mapping extension',
     permissions: ['cookies', 'activeTab'],
     host_permissions: ['<all_urls>'],
   },

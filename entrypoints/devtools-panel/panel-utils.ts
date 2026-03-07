@@ -7,6 +7,43 @@ import type {
 
 export type PanelEndpointGroup = EndpointGroup<RecordedNetworkEntry>;
 
+function normalizeHeaderValue(rawValue: unknown): string {
+  return rawValue == null ? '' : String(rawValue);
+}
+
+export function buildHeaderValuesMap(
+  entries: readonly RecordedNetworkEntry[],
+  source: 'request' | 'response',
+): Record<string, string[]> {
+  const valuesByHeader: Record<string, string[]> = {};
+
+  for (const entry of entries) {
+    const headers = source === 'request' ? entry.request?.headers : entry.response?.headers;
+    if (!Array.isArray(headers)) {
+      continue;
+    }
+
+    for (const header of headers) {
+      if (!header || typeof header.name !== 'string') {
+        continue;
+      }
+
+      const lowerName = header.name.toLowerCase();
+      const value = normalizeHeaderValue(header.value);
+
+      if (!(lowerName in valuesByHeader)) {
+        valuesByHeader[lowerName] = [];
+      }
+
+      if (!valuesByHeader[lowerName].includes(value)) {
+        valuesByHeader[lowerName].push(value);
+      }
+    }
+  }
+
+  return valuesByHeader;
+}
+
 export function getScore(entry: RecordedNetworkEntry): number {
   return typeof entry.score?.total === 'number' ? entry.score.total : 0;
 }
@@ -257,7 +294,7 @@ export function buildSnapshotFilename(snapshotTime: Date | null): string {
   const min = formatNumberForFilename(date.getMinutes());
   const ss = formatNumberForFilename(date.getSeconds());
 
-  return `gladium-snapshot-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
+  return `prism-snapshot-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
 }
 
 export function buildMapFilename(): string {
@@ -269,5 +306,5 @@ export function buildMapFilename(): string {
   const min = formatNumberForFilename(date.getMinutes());
   const ss = formatNumberForFilename(date.getSeconds());
 
-  return `gladium-api-map-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
+  return `prism-api-map-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
 }

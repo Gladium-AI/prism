@@ -1,6 +1,6 @@
-# Gladium AI Network Snapshot Extension
+# Prism DevTools Extension
 
-Chrome DevTools extension scaffolded with WXT + React + TypeScript.
+Prism Chrome DevTools extension scaffolded with WXT + React + TypeScript.
 
 ## Development
 
@@ -9,7 +9,7 @@ npm install
 npm run dev -- --browser chrome
 ```
 
-WXT builds to `.output/chrome-mv3-dev`. When running `npm run dev`, open Chrome DevTools and select the `Gladium AI` panel to view the React DevTools panel entrypoint.
+WXT builds to `.output/chrome-mv3-dev`. When running `npm run dev`, open Chrome DevTools and select the `Prism` panel to view the React DevTools panel entrypoint.
 
 ## Build
 

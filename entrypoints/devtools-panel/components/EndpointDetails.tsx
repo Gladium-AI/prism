@@ -1,5 +1,11 @@
 import type { SchemaObservation } from '@/core';
-import { getDisplayMethod, getMethodClass, isGraphQLGroup, type PanelEndpointGroup } from '../panel-utils';
+import {
+  buildHeaderValuesMap,
+  getDisplayMethod,
+  getMethodClass,
+  isGraphQLGroup,
+  type PanelEndpointGroup,
+} from '../panel-utils';
 import { BodySchemaView, HeadersSchemaTable } from './SchemaView';
 
 function EmptyDetailsState() {
@@ -35,9 +41,19 @@ export function EndpointDetails({
   const displayUrl = group.normalizedUrl || group.endpointKey;
   const apiTypeLabel = isGraphQLGroup(group) ? 'GraphQL' : 'REST';
   const apiTypeClass = isGraphQLGroup(group) ? 'meta-chip-graphql' : 'meta-chip-rest';
-  const authHeaders = mergedSchema ? (
-    <HeadersSchemaTable headersSchema={mergedSchema.request.headers} showAuthOnly={true} />
-  ) : null;
+
+  const requestHeaderValues = buildHeaderValuesMap(group.entries, 'request');
+  const responseHeaderValues = buildHeaderValuesMap(group.entries, 'response');
+
+  const requestHeaderFields = mergedSchema?.request.headers.fields ?? [];
+  const responseHeaderFields = mergedSchema?.response.headers.fields ?? [];
+  const hasAuthHeaders = requestHeaderFields.some((field) => field.isAuth);
+  const hasRequestHeaders = requestHeaderFields.length > 0;
+  const hasResponseHeaders = responseHeaderFields.length > 0;
+  const hasRequestBody = mergedSchema?.request.body != null;
+  const hasResponseBody = mergedSchema?.response.body != null;
+  const hasAnySection =
+    hasAuthHeaders || hasRequestHeaders || hasRequestBody || hasResponseHeaders || hasResponseBody;
 
   return (
     <section className="detail-block" aria-label="Endpoint details">
@@ -56,44 +72,66 @@ export function EndpointDetails({
           <p className="summary-url">{displayUrl}</p>
         </section>
 
-        {!mergedSchema ? (
-          <div className="empty-state">Schema inference unavailable</div>
+        {!mergedSchema || !hasAnySection ? (
+          <div className="empty-state">No endpoint schema details available yet.</div>
         ) : (
           <>
-            {authHeaders ? (
+            {hasAuthHeaders ? (
               <section className="detail-section">
                 <h3>Authentication</h3>
-                <div className="section-body">{authHeaders}</div>
+                <div className="section-body">
+                  <HeadersSchemaTable
+                    headersSchema={mergedSchema.request.headers}
+                    showAuthOnly={true}
+                    headerValues={requestHeaderValues}
+                  />
+                </div>
               </section>
             ) : null}
 
-            <section className="detail-section">
-              <h3>Request Headers</h3>
-              <div className="section-body">
-                <HeadersSchemaTable headersSchema={mergedSchema.request.headers} showAuthOnly={false} />
-              </div>
-            </section>
+            {hasRequestHeaders ? (
+              <section className="detail-section">
+                <h3>Request Headers</h3>
+                <div className="section-body">
+                  <HeadersSchemaTable
+                    headersSchema={mergedSchema.request.headers}
+                    showAuthOnly={false}
+                    headerValues={requestHeaderValues}
+                  />
+                </div>
+              </section>
+            ) : null}
 
-            <section className="detail-section">
-              <h3>Request Body</h3>
-              <div className="section-body">
-                <BodySchemaView bodySchema={mergedSchema.request.body} />
-              </div>
-            </section>
+            {hasRequestBody ? (
+              <section className="detail-section">
+                <h3>Request Body</h3>
+                <div className="section-body">
+                  <BodySchemaView bodySchema={mergedSchema.request.body} />
+                </div>
+              </section>
+            ) : null}
 
-            <section className="detail-section">
-              <h3>Response Headers</h3>
-              <div className="section-body">
-                <HeadersSchemaTable headersSchema={mergedSchema.response.headers} showAuthOnly={false} />
-              </div>
-            </section>
+            {hasResponseHeaders ? (
+              <section className="detail-section">
+                <h3>Response Headers</h3>
+                <div className="section-body">
+                  <HeadersSchemaTable
+                    headersSchema={mergedSchema.response.headers}
+                    showAuthOnly={false}
+                    headerValues={responseHeaderValues}
+                  />
+                </div>
+              </section>
+            ) : null}
 
-            <section className="detail-section">
-              <h3>Response Body</h3>
-              <div className="section-body">
-                <BodySchemaView bodySchema={mergedSchema.response.body} />
-              </div>
-            </section>
+            {hasResponseBody ? (
+              <section className="detail-section">
+                <h3>Response Body</h3>
+                <div className="section-body">
+                  <BodySchemaView bodySchema={mergedSchema.response.body} />
+                </div>
+              </section>
+            ) : null}
           </>
         )}
       </div>

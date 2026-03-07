@@ -129,12 +129,53 @@ export function BodySchemaView({ bodySchema }: { bodySchema: BodySchema | null |
   );
 }
 
-function HeaderRow({ field }: { field: HeaderField }) {
+function getCollapsedValue(value: string, maxLength = 110): string {
+  const singleLine = value.replace(/\s+/g, ' ').trim();
+  if (singleLine.length <= maxLength) {
+    return singleLine;
+  }
+  return `${singleLine.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+const COLLAPSIBLE_VALUE_THRESHOLD = 120;
+
+function HeaderValueItem({ value }: { value: string }) {
+  const normalizedValue = value.length > 0 ? value : '(empty)';
+  const singleLineValue = normalizedValue.replace(/\s+/g, ' ').trim();
+  const collapsedValue = getCollapsedValue(normalizedValue);
+  const shouldCollapse = singleLineValue.length > COLLAPSIBLE_VALUE_THRESHOLD;
+
+  if (!shouldCollapse) {
+    return (
+      <div className="header-value-plain" title={normalizedValue}>
+        {normalizedValue}
+      </div>
+    );
+  }
+
+  return (
+    <details className="header-value-collapsible">
+      <summary title={normalizedValue}>{collapsedValue}</summary>
+      <pre className="header-value-expanded">{normalizedValue}</pre>
+    </details>
+  );
+}
+
+function HeaderRow({ field, values }: { field: HeaderField; values: string[] }) {
+  const displayValues = values.length > 0 ? values : [''];
+
   return (
     <tr className={field.isAuth ? 'auth-row' : ''}>
       <td className="header-name">
         {field.name}
         {field.isAuth ? <span className="auth-badge">AUTH</span> : null}
+      </td>
+      <td className="header-value">
+        <div className="header-values">
+          {displayValues.map((value, index) => (
+            <HeaderValueItem key={`${field.name}-value-${index}`} value={value} />
+          ))}
+        </div>
       </td>
       <td className="header-type">{field.valueType || 'unknown'}</td>
       <td className="header-meta">
@@ -150,9 +191,11 @@ function HeaderRow({ field }: { field: HeaderField }) {
 export function HeadersSchemaTable({
   headersSchema,
   showAuthOnly,
+  headerValues,
 }: {
   headersSchema: HeadersSchema | null | undefined;
   showAuthOnly: boolean;
+  headerValues?: Record<string, string[]>;
 }) {
   if (!headersSchema || !Array.isArray(headersSchema.fields) || headersSchema.fields.length === 0) {
     return showAuthOnly ? null : <div className="schema-note">No headers</div>;
@@ -171,14 +214,16 @@ export function HeadersSchemaTable({
       <thead>
         <tr>
           <th>Header</th>
+          <th>Values</th>
           <th>Type</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
-        {fields.map((field) => (
-          <HeaderRow key={field.name} field={field} />
-        ))}
+        {fields.map((field) => {
+          const values = headerValues?.[field.name.toLowerCase()] ?? [];
+          return <HeaderRow key={field.name} field={field} values={values} />;
+        })}
       </tbody>
     </table>
   );
