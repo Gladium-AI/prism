@@ -897,6 +897,135 @@ function parseJsonSafely(value: string): unknown {
   }
 }
 
+function normalizeContentType(contentType: string | null | undefined): string | null {
+  if (typeof contentType !== 'string') {
+    return null;
+  }
+
+  const [mimeType = ''] = contentType.toLowerCase().split(';', 1);
+  const normalized = mimeType.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function shouldTreatAsJson(contentType: string | null | undefined, body: string): boolean {
+  const normalizedType = normalizeContentType(contentType);
+  if (normalizedType && (normalizedType.includes('json') || normalizedType.endsWith('+json'))) {
+    return true;
+  }
+
+  const trimmed = body.trim();
+  return (
+    (trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))
+  );
+}
+
+type JsonHighlightTokenKind = 'plain' | 'key' | 'string' | 'number' | 'boolean' | 'null' | 'punctuation';
+
+interface JsonHighlightToken {
+  kind: JsonHighlightTokenKind;
+  value: string;
+}
+
+const JSON_TOKEN_REGEX = /"(?:\\.|[^"\\])*"(?=\s*:)|"(?:\\.|[^"\\])*"|true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[{}\[\],:]/g;
+
+function tokenizeJson(value: string): JsonHighlightToken[] {
+  const tokens: JsonHighlightToken[] = [];
+  let index = 0;
+
+  for (const match of value.matchAll(JSON_TOKEN_REGEX)) {
+    const matchValue = match[0];
+    const matchIndex = typeof match.index === 'number' ? match.index : -1;
+    if (matchIndex < 0) {
+      continue;
+    }
+
+    if (matchIndex > index) {
+      tokens.push({
+        kind: 'plain',
+        value: value.slice(index, matchIndex),
+      });
+    }
+
+    let kind: JsonHighlightTokenKind = 'number';
+    if (matchValue === 'true' || matchValue === 'false') {
+      kind = 'boolean';
+    } else if (matchValue === 'null') {
+      kind = 'null';
+    } else if (/^[{}\[\],:]$/.test(matchValue)) {
+      kind = 'punctuation';
+    } else if (matchValue.startsWith('"')) {
+      let cursor = matchIndex + matchValue.length;
+      while (cursor < value.length && /\s/.test(value[cursor] ?? '')) {
+        cursor += 1;
+      }
+      kind = value[cursor] === ':' ? 'key' : 'string';
+    }
+
+    tokens.push({
+      kind,
+      value: matchValue,
+    });
+    index = matchIndex + matchValue.length;
+  }
+
+  if (index < value.length) {
+    tokens.push({
+      kind: 'plain',
+      value: value.slice(index),
+    });
+  }
+
+  return tokens;
+}
+
+interface IncomingBodyDisplay {
+  contentType: string | null;
+  kind: 'json' | 'plain';
+  body: string;
+}
+
+function getIncomingBodyDisplay(entry: RecordedNetworkEntry | null): IncomingBodyDisplay {
+  if (!entry) {
+    return {
+      contentType: null,
+      kind: 'plain',
+      body: '(empty body)',
+    };
+  }
+
+  const body = typeof entry.response.body === 'string' ? entry.response.body : '';
+  if (body.length === 0) {
+    return {
+      contentType: normalizeContentType(entry.response.contentType),
+      kind: 'plain',
+      body: '(empty body)',
+    };
+  }
+
+  if (!shouldTreatAsJson(entry.response.contentType, body)) {
+    return {
+      contentType: normalizeContentType(entry.response.contentType),
+      kind: 'plain',
+      body,
+    };
+  }
+
+  const parsed = parseJsonSafely(body);
+  if (parsed === undefined) {
+    return {
+      contentType: normalizeContentType(entry.response.contentType),
+      kind: 'plain',
+      body,
+    };
+  }
+
+  return {
+    contentType: normalizeContentType(entry.response.contentType),
+    kind: 'json',
+    body: stringifyJson(parsed),
+  };
+}
+
 function extractGraphQLVariablesPayload(entry: RecordedNetworkEntry): unknown {
   const body = entry.request.body;
   if (typeof body === 'string' && body.trim().length > 0) {
@@ -1426,6 +1555,7 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
         extractCapturedCookieSignalsFromHeaders(selectedEntry.response.headers),
       )
     : [];
+  const incomingBodyDisplay = useMemo(() => getIncomingBodyDisplay(selectedEntry), [selectedEntry]);
 
   return (
     <section className="sequence-view" aria-label="Sequence flow view">
@@ -1671,8 +1801,20 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
                     <div className="sequence-incoming-meta">
                       <span>Status: {typeof selectedEntry.response.status === 'number' ? selectedEntry.response.status : 'unknown'}</span>
                       <span>Duration: {formatDuration(selectedEntry.timing.durationMs)}</span>
+                      <span>Type: {incomingBodyDisplay.contentType ?? 'unknown'}</span>
                     </div>
-                    <pre className="incoming-body-preview">{truncateValue(selectedEntry.response.body || '(empty body)', 2600)}</pre>
+                    <pre className={`incoming-body-preview${incomingBodyDisplay.kind === 'json' ? ' json' : ''}`}>
+                      {incomingBodyDisplay.kind === 'json'
+                        ? tokenizeJson(incomingBodyDisplay.body).map((token, index) => (
+                            <span
+                              key={`incoming-token-${index}`}
+                              className={token.kind === 'plain' ? undefined : `incoming-token ${token.kind}`}
+                            >
+                              {token.value}
+                            </span>
+                          ))
+                        : incomingBodyDisplay.body}
+                    </pre>
                   </div>
                 ) : null}
 
