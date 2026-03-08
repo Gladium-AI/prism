@@ -29,7 +29,7 @@ import {
   type PanelEndpointGroup,
 } from '../panel-utils';
 import { EndpointList } from './EndpointList';
-import { JsonSchemaTree } from './SchemaView';
+import { BodySchemaView, JsonSchemaTree } from './SchemaView';
 
 export type PanelTabId = 'dashboard' | 'mapping-tree' | 'sequence-flow';
 
@@ -54,6 +54,7 @@ type SequenceDetailTab =
   | 'cookies'
   | 'graphql'
   | 'variables'
+  | 'request-body'
   | 'incoming'
   | 'response-headers';
 
@@ -578,9 +579,11 @@ function EndpointDetailsModules({
   const [collapsedDetailCards, setCollapsedDetailCards] = useState<{
     auth: boolean;
     cookies: boolean;
+    requestBody: boolean;
   }>({
     auth: true,
     cookies: true,
+    requestBody: true,
   });
 
   useEffect(() => {
@@ -591,6 +594,7 @@ function EndpointDetailsModules({
     setCollapsedDetailCards({
       auth: true,
       cookies: true,
+      requestBody: true,
     });
   }, [selectedGroup?.endpointKey]);
 
@@ -631,6 +635,8 @@ function EndpointDetailsModules({
       isAuth: field.isAuth === true,
     };
   });
+  const requestBodyDefinition = getEndpointRequestBodyDefinition(selectedGroup.entries);
+  const isRestEndpoint = selectedGraphQLOperation == null;
 
   return (
     <div className="module-stack">
@@ -739,6 +745,65 @@ function EndpointDetailsModules({
           </div>
         )}
       </section>
+
+      {isRestEndpoint ? (
+        <section className="module-card">
+          <header className="module-header">
+            <div className="module-header-main">
+              <h3>Request Body</h3>
+              <Badge variant="count" uppercase={false}>
+                {requestBodyDefinition.observedCount}
+              </Badge>
+            </div>
+            <button
+              className="module-collapse-toggle"
+              type="button"
+              aria-expanded={collapsedDetailCards.requestBody ? 'false' : 'true'}
+              onClick={() =>
+                setCollapsedDetailCards((previous) => ({
+                  ...previous,
+                  requestBody: !previous.requestBody,
+                }))
+              }
+            >
+              {collapsedDetailCards.requestBody ? 'Show' : 'Hide'}
+            </button>
+          </header>
+          {collapsedDetailCards.requestBody ? null : (
+            <div className="module-body">
+              <div className="module-subsection">
+                <p className="module-subsection-title">Schema</p>
+                <BodySchemaView bodySchema={selectedMergedSchema?.request.body ?? null} />
+              </div>
+              <div className="module-subsection">
+                <p className="module-subsection-title">Definition</p>
+                {requestBodyDefinition.observedCount === 0 ? (
+                  <div className="schema-note">No request bodies observed on this endpoint.</div>
+                ) : (
+                  <>
+                    <div className="sequence-incoming-meta">
+                      <span>Type: {requestBodyDefinition.contentType ?? 'unknown'}</span>
+                      <span>Observed payloads: {requestBodyDefinition.observedCount}</span>
+                    </div>
+                    <pre className={`incoming-body-preview${requestBodyDefinition.kind === 'json' ? ' json' : ''}`}>
+                      {requestBodyDefinition.kind === 'json'
+                        ? tokenizeJson(requestBodyDefinition.body).map((token, index) => (
+                            <span
+                              key={`request-definition-token-${index}`}
+                              className={token.kind === 'plain' ? undefined : `incoming-token ${token.kind}`}
+                            >
+                              {token.value}
+                            </span>
+                          ))
+                        : requestBodyDefinition.body}
+                    </pre>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+      ) : null}
 
       <section className="module-card">
         <header className="module-header">
@@ -978,13 +1043,69 @@ function tokenizeJson(value: string): JsonHighlightToken[] {
   return tokens;
 }
 
-interface IncomingBodyDisplay {
+interface BodyDisplay {
   contentType: string | null;
   kind: 'json' | 'plain';
   body: string;
 }
 
-function getIncomingBodyDisplay(entry: RecordedNetworkEntry | null): IncomingBodyDisplay {
+function getHeaderValue(
+  headers: readonly HeaderLike[] | null | undefined,
+  targetName: string,
+): string | null {
+  if (!Array.isArray(headers) || headers.length === 0) {
+    return null;
+  }
+
+  const normalizedName = targetName.toLowerCase();
+  for (const header of headers) {
+    if (!header || typeof header.name !== 'string' || header.name.toLowerCase() !== normalizedName) {
+      continue;
+    }
+    const normalizedValue = normalizeHeaderValue(header.value).trim();
+    if (normalizedValue.length > 0) {
+      return normalizedValue;
+    }
+  }
+
+  return null;
+}
+
+function getBodyDisplay(body: string, contentType: string | null | undefined): BodyDisplay {
+  const normalizedType = normalizeContentType(contentType);
+  if (body.length === 0) {
+    return {
+      contentType: normalizedType,
+      kind: 'plain',
+      body: '(empty body)',
+    };
+  }
+
+  if (!shouldTreatAsJson(contentType, body)) {
+    return {
+      contentType: normalizedType,
+      kind: 'plain',
+      body,
+    };
+  }
+
+  const parsed = parseJsonSafely(body);
+  if (parsed === undefined) {
+    return {
+      contentType: normalizedType,
+      kind: 'plain',
+      body,
+    };
+  }
+
+  return {
+    contentType: normalizedType,
+    kind: 'json',
+    body: stringifyJson(parsed),
+  };
+}
+
+function getIncomingBodyDisplay(entry: RecordedNetworkEntry | null): BodyDisplay {
   if (!entry) {
     return {
       contentType: null,
@@ -994,35 +1115,54 @@ function getIncomingBodyDisplay(entry: RecordedNetworkEntry | null): IncomingBod
   }
 
   const body = typeof entry.response.body === 'string' ? entry.response.body : '';
-  if (body.length === 0) {
+  return getBodyDisplay(body, entry.response.contentType);
+}
+
+function getRequestBodyDisplay(entry: RecordedNetworkEntry | null): BodyDisplay {
+  if (!entry) {
     return {
-      contentType: normalizeContentType(entry.response.contentType),
+      contentType: null,
       kind: 'plain',
       body: '(empty body)',
     };
   }
 
-  if (!shouldTreatAsJson(entry.response.contentType, body)) {
+  const body = typeof entry.request.body === 'string' ? entry.request.body : '';
+  const requestContentType = getHeaderValue(entry.request.headers, 'content-type');
+  return getBodyDisplay(body, requestContentType);
+}
+
+interface RequestBodyDefinitionDisplay extends BodyDisplay {
+  observedCount: number;
+}
+
+function getEndpointRequestBodyDefinition(entries: readonly RecordedNetworkEntry[]): RequestBodyDefinitionDisplay {
+  let latestEntryWithBody: RecordedNetworkEntry | null = null;
+  let observedCount = 0;
+
+  for (const entry of entries) {
+    const body = entry.request.body;
+    if (typeof body !== 'string' || body.length === 0) {
+      continue;
+    }
+
+    observedCount += 1;
+    latestEntryWithBody = entry;
+  }
+
+  if (!latestEntryWithBody) {
     return {
-      contentType: normalizeContentType(entry.response.contentType),
+      contentType: null,
       kind: 'plain',
-      body,
+      body: '(empty body)',
+      observedCount: 0,
     };
   }
 
-  const parsed = parseJsonSafely(body);
-  if (parsed === undefined) {
-    return {
-      contentType: normalizeContentType(entry.response.contentType),
-      kind: 'plain',
-      body,
-    };
-  }
-
+  const bodyDisplay = getRequestBodyDisplay(latestEntryWithBody);
   return {
-    contentType: normalizeContentType(entry.response.contentType),
-    kind: 'json',
-    body: stringifyJson(parsed),
+    ...bodyDisplay,
+    observedCount,
   };
 }
 
@@ -1555,6 +1695,7 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
         extractCapturedCookieSignalsFromHeaders(selectedEntry.response.headers),
       )
     : [];
+  const requestBodyDisplay = useMemo(() => getRequestBodyDisplay(selectedEntry), [selectedEntry]);
   const incomingBodyDisplay = useMemo(() => getIncomingBodyDisplay(selectedEntry), [selectedEntry]);
 
   return (
@@ -1686,6 +1827,7 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
                   { id: 'cookies', label: 'Cookies' },
                   { id: 'graphql', label: 'GraphQL' },
                   { id: 'variables', label: 'Variables' },
+                  { id: 'request-body', label: 'Request Body' },
                   { id: 'incoming', label: 'Incoming' },
                   { id: 'response-headers', label: 'Headers+' },
                 ].map((tab) => (
@@ -1794,6 +1936,31 @@ export function SequenceFlowTab({ groups, displayEntries, onSelectEndpoint }: Se
                   ) : (
                     <div className="empty-state module-empty-state">Variables are available only for GraphQL requests.</div>
                   )
+                ) : null}
+
+                {detailTab === 'request-body' ? (
+                  <div className="sequence-incoming-stack">
+                    <div className="sequence-incoming-meta">
+                      <span>Method: {getDisplayMethod(selectedEntry.request.method)}</span>
+                      <span>Type: {requestBodyDisplay.contentType ?? 'unknown'}</span>
+                      <span>
+                        Size:{' '}
+                        {typeof selectedEntry.request.body === 'string' ? `${selectedEntry.request.body.length} chars` : '0 chars'}
+                      </span>
+                    </div>
+                    <pre className={`incoming-body-preview${requestBodyDisplay.kind === 'json' ? ' json' : ''}`}>
+                      {requestBodyDisplay.kind === 'json'
+                        ? tokenizeJson(requestBodyDisplay.body).map((token, index) => (
+                            <span
+                              key={`request-token-${index}`}
+                              className={token.kind === 'plain' ? undefined : `incoming-token ${token.kind}`}
+                            >
+                              {token.value}
+                            </span>
+                          ))
+                        : requestBodyDisplay.body}
+                    </pre>
+                  </div>
                 ) : null}
 
                 {detailTab === 'incoming' ? (
